@@ -1,3 +1,7 @@
 /dependencies
 
 *.csv
+*.out
+*.json
+
+/vol/bitbucket/jg2619/augmenting_llms/model_training/model_experiments/results

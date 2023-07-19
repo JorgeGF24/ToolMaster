@@ -9,7 +9,7 @@ from csv import DictWriter
 #'calculator/', 'calendar/'
 dirs = ['/vol/bitbucket/jg2619/data/preprocessed/big_load/' + tool for tool in ['calculator/']]
 new_dirs = ['/vol/bitbucket/jg2619/data/preprocessed/big_load_reverse/' + tool for tool in ['calculator/']]
-cache_dir = "/vol/bitbucket/jg2619/toolformer/cache"
+cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache"
 
 csv.field_size_limit(sys.maxsize)
 

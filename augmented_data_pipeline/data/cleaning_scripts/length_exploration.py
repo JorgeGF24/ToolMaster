@@ -5,7 +5,7 @@ import csv
 from transformers import AutoTokenizer
 
 
-cache_dir = "/vol/bitbucket/jg2619/toolformer/cache"
+cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache"
 
 tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", cache_dir=cache_dir)
 print("Tokenizer loaded")
