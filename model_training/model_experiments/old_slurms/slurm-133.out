@@ -1,0 +1,74 @@
+Tue Jul 18 17:22:19 2023       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 535.54.03              Driver Version: 535.54.03    CUDA Version: 12.2     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA A40                     On  | 00000000:04:00.0 Off |                    0 |
+|  0%   28C    P8              20W / 300W |      4MiB / 46068MiB |      0%      Default |
+|                                         |                      |                  N/A |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|  No running processes found                                                           |
++---------------------------------------------------------------------------------------+
+Tue 18 Jul 17:22:19 BST 2023
+Starting 48Gb job
+Found cached dataset csv (/vol/bitbucket/jg2619/toolformer/cache/csv/train-d2af6afa20247914/0.0.0/eea64c71ca8b46dd3f537ed218fc9bf495d5707789152eb2764f5c78fa66d59d)
+Found cached dataset csv (/vol/bitbucket/jg2619/toolformer/cache/csv/test-7cb8352c879c0c16/0.0.0/eea64c71ca8b46dd3f537ed218fc9bf495d5707789152eb2764f5c78fa66d59d)
+/vol/bitbucket/jg2619/toolformer-luci/oldtoolvenv/lib/python3.10/site-packages/transformers/optimization.py:411: FutureWarning: This implementation of AdamW is deprecated and will be removed in a future version. Use the PyTorch implementation torch.optim.AdamW instead, or set `no_deprecation_warning=True` to disable this warning
+  warnings.warn(
+  0%|          | 0/10522 [00:00<?, ?it/s]LOL
+<class 'list'>
+<class 'tuple'>
+<class 'list'>
+Traceback (most recent call last):
+  File "/vol/bitbucket/jg2619/model_experiments/train.py", line 133, in <module>
+    trainer.train()
+  File "/vol/bitbucket/jg2619/toolformer-luci/oldtoolvenv/lib/python3.10/site-packages/transformers/trainer.py", line 1645, in train
+    return inner_training_loop(
+  File "/vol/bitbucket/jg2619/toolformer-luci/oldtoolvenv/lib/python3.10/site-packages/transformers/trainer.py", line 1916, in _inner_training_loop
+    for step, inputs in enumerate(epoch_iterator):
+  File "/vol/bitbucket/jg2619/toolformer-luci/oldtoolvenv/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 633, in __next__
+    data = self._next_data()
+  File "/vol/bitbucket/jg2619/toolformer-luci/oldtoolvenv/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 677, in _next_data
+    data = self._dataset_fetcher.fetch(index)  # may raise StopIteration
+  File "/vol/bitbucket/jg2619/toolformer-luci/oldtoolvenv/lib/python3.10/site-packages/torch/utils/data/_utils/fetch.py", line 54, in fetch
+    return self.collate_fn(data)
+  File "/vol/bitbucket/jg2619/toolformer-luci/oldtoolvenv/lib/python3.10/site-packages/transformers/trainer_utils.py", line 706, in __call__
+    return self.data_collator(features)
+  File "/vol/bitbucket/jg2619/model_experiments/train.py", line 78, in collate_fn
+    mask = pad_sequence(mask, batch_first=True)
+  File "/vol/bitbucket/jg2619/toolformer-luci/oldtoolvenv/lib/python3.10/site-packages/torch/nn/utils/rnn.py", line 399, in pad_sequence
+    return torch._C._nn.pad_sequence(sequences, batch_first, padding_value)
+TypeError: expected Tensor as element 0 in argument 0, but got str
+  0%|          | 0/10522 [00:00<?, ?it/s]
+Tue Jul 18 17:22:36 2023       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 535.54.03              Driver Version: 535.54.03    CUDA Version: 12.2     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA A40                     On  | 00000000:04:00.0 Off |                    0 |
+|  0%   31C    P0              69W / 300W |      4MiB / 46068MiB |      0%      Default |
+|                                         |                      |                  N/A |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|  No running processes found                                                           |
++---------------------------------------------------------------------------------------+
+ 17:22:36 up 2 days, 13:46,  0 users,  load average: 0.22, 0.06, 0.02
+Tue 18 Jul 17:22:36 BST 2023
+0 minutes and 17 seconds elapsed.
