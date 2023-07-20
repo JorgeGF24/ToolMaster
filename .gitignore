@@ -3,5 +3,8 @@
 *.csv
 *.out
 *.json
+*.lock
+*.arrow
 
-/vol/bitbucket/jg2619/augmenting_llms/model_training/model_experiments/results
+/model_training/model_experiments/results
+/benchmarks/ToolQA

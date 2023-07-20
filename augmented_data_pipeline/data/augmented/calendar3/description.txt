@@ -1,0 +1,1 @@
+Augmented database setting truncation to true. Done with low perplexity texts

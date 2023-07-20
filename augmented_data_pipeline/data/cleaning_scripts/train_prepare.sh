@@ -3,7 +3,7 @@
 #SBATCH --mail-type=ALL # required to send email notifcations
 #SBATCH --mail-user=jg2619@ic.ac.uk # required to send email notifcations - please replace <your_username> with your college login name or email address
 export PATH=/vol/bitbucket/jg2619/toolformer/toolfvenv/bin/:$PATH
-export PYSERINI_CACHE=/vol/bitbucket/jg2619/toolformer/cache
+export PYSERINI_CACHE=/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache
 echo $(date)
 SECONDS=0
 source activate

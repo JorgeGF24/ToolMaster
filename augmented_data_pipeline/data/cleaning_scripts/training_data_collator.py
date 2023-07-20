@@ -8,7 +8,7 @@ from datasets import load_dataset
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-cache_dir = "/vol/bitbucket/jg2619/toolformer/cache"
+cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache"
 tokenizer = AutoTokenizer.from_pretrained("/vol/bitbucket/jg2619/models/tokenizer", truncate=True, max_length=270, cache_dir=cache_dir)
 
 TOOL_START_TOKEN = "<TOOL>"

@@ -21,9 +21,9 @@ from beartype.typing import Callable, Any, TypeVar, Dict, Union, Optional, Seque
 pad_sequence = partial(pad_sequence, batch_first=True)
 
 
-cache_dir = "/vol/bitbucket/jg2619/toolformer/cache/"
-dataset_dir = "/vol/bitbucket/jg2619/data/augmented_standard/"
-data_files = os.listdir("/vol/bitbucket/jg2619/data/augmented_prompttrick/")
+cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache/"
+dataset_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/augmented_standard/"
+data_files = os.listdir("/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/augmented_prompttrick/")
 len_data_files = len(data_files)
 
 
@@ -90,8 +90,10 @@ test_dataset = ToolDataset({key: test_dataset[key] for key in ["tokenized_tool_t
 class MyTrainer(Trainer):
 
     def compute_loss(self, model, inputs, return_outputs=False):
-        mask, tokenized_data = inputs
+        tokenized_data, mask = inputs
         mask = mask.view(-1).bool()
+        print(tokenized_data)
+        print(f"Tokenized data is: {tokenizer.decode(tokenized_data[0])}")
         outputs = model(**{"input_ids":tokenized_data}, use_cache=False)
         
         logits = outputs.logits
@@ -109,7 +111,7 @@ training_args = TrainingArguments(
     per_device_train_batch_size=1, # batch size for training
     per_device_eval_batch_size=1,  # batch size for evaluation
     eval_steps = 100, # Number of update steps between two evaluations.
-    save_steps=100, # after # steps model is saved
+    save_steps=1000, # after # steps model is saved
     warmup_steps=500,# number of warmup steps for learning rate scheduler
 )
 
@@ -126,3 +128,5 @@ trainer = MyTrainer(
 #STATS
 
 trainer.train()
+
+model.save_pretrained("/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPT2")
