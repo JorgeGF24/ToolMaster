@@ -1,0 +1,5 @@
+This folder was made with 3 calls of the toolformer pipeline. None share data.
+The first started with long sentences from 0.csv in big_load_reverse
+The rest came from other files in big_load_shuffled.
+
+I have now improved the arg preprocessing as many showed near duplicates.
