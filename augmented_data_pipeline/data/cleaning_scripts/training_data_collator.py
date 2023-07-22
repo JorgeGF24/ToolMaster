@@ -10,9 +10,12 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache"
 tokenizer = AutoTokenizer.from_pretrained("/vol/bitbucket/jg2619/models/tokenizer", truncate=True, max_length=270, cache_dir=cache_dir)
+tokenizer2 = AutoTokenizer.from_pretrained("gpt2", truncate=True, max_length=270, cache_dir=cache_dir)
 
 TOOL_START_TOKEN = "<TOOL>"
 TOOL_END_TOKEN = "</TOOL>" 
+
+tokenizer2.add_tokens([TOOL_START_TOKEN, TOOL_END_TOKEN])
 
 
 def mask_tokenize_data(
@@ -22,7 +25,7 @@ def mask_tokenize_data(
 ):
     global tokenizer, TOOL_START_TOKEN, TOOL_END_TOKEN
 
-    output_fields = ["tokenized_tool_text", "token_type", "method_A_train_mask", "tool_name"]
+    output_fields = ["tokenized_tool_text", "tokenized_tool_text2", "token_type", "token_type2", "method_A_train_mask", "method_A_train_mask2", "tool_name"]
     # Create output directory
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -44,6 +47,7 @@ def mask_tokenize_data(
                 
                 text = data["API_call_response_text"]
                 tokenized_text = tokenizer(text, truncation=True, max_length=270).input_ids
+                tokenized_text2 = tokenizer2(text, truncation=True, max_length=270).input_ids
 
                 # Find index where tokenized_text matches the tool start token:
                 index_start = tokenized_text.index(tokenizer.encode(TOOL_START_TOKEN)[0])
@@ -54,15 +58,19 @@ def mask_tokenize_data(
 
                 len_toolname = len(tokenizer.encode(tool_name))
 
+                # Find index where tokenized_text matches the tool start token:
+                index_start2 = tokenized_text2.index(tokenizer2.encode(TOOL_START_TOKEN)[0])
+                index_arrow2 = tokenized_text2[index_start2:].index(tokenizer2.encode("→")[0]) + index_start2 + 1
+                index_end2 = tokenized_text2[index_arrow2:].index(tokenizer2.encode(TOOL_END_TOKEN)[0]) + index_arrow2 + 1
+
+                len_start2 = index_start2 + 1
+
+                len_toolname2 = len(tokenizer2.encode(tool_name))
+
                 # Find number of ocurrences of →
                 occurrences = len(re.findall(r'(\)\→)', text))
 
-                if occurrences == 1:
-                    # Create mask for method A
-                    method_A_train_mask = torch.zeros(len(tokenized_text))
-                    method_A_train_mask[len_start+len_toolname] += 1
-                    output["method_A_train_mask"] = method_A_train_mask
-                else:
+                if occurrences != 1:
                     print("More than one occurrence of →", flush=True)
                     print(text, flush=True)
                     raise Exception("More than one occurrence of →")
@@ -80,12 +88,30 @@ def mask_tokenize_data(
                 token_type[index_end+1] += 1                       # ...Data
                 token_type = token_type.cumsum(dim=0)
 
+                # Create token type mask
+                token_type2 = torch.zeros(len(tokenized_text2))      # Data...
+                token_type2[len_start2] += 1                         # <TOOL>
+                token_type2[len_start2+1] += 1                       # Toolname
+                token_type2[len_start2+1 + len_toolname2] += 1        # (
+                token_type2[len_start2+1 + len_toolname2 + 1] += 1    # args
+                token_type2[index_arrow2 - 1] += 1                   # )
+                token_type2[index_arrow2] += 1                       # →
+                token_type2[index_arrow2+1] += 1                     # response
+                token_type2[index_end2] += 1                         # </TOOL>
+                token_type2[index_end2+1] += 1                       # ...Data
+                token_type2 = token_type2.cumsum(dim=0)
+
                 method_A_train_mask = (torch.isin(token_type, torch.tensor([0, 1, 2, 9])))
+                method_A_train_mask2 = (torch.isin(token_type2, torch.tensor([0, 1, 2, 9])))
 
                 output["tokenized_tool_text"] = tokenized_text
                 output["token_type"] = token_type.tolist()
                 output["method_A_train_mask"] = method_A_train_mask.float().tolist()
                 output["tool_name"] = tool_name
+
+                output["tokenized_tool_text2"] = tokenized_text2
+                output["token_type2"] = token_type2.tolist()
+                output["method_A_train_mask2"] = method_A_train_mask2.float().tolist()
 
                 writer.writerow(output)
 
