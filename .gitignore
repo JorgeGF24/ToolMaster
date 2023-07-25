@@ -5,6 +5,9 @@
 *.json
 *.lock
 *.arrow
+*.log
+stats_*.txt
+*.model
 
 /model_training/model_experiments/results
 /benchmarks/ToolQA
