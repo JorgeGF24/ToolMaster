@@ -6,6 +6,8 @@ from csv import DictWriter
 from datasets import load_dataset
 
 
+cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache"
+
 def remove_new_lines(input_dir, output_dir):
 
     # Create output directory
@@ -15,7 +17,7 @@ def remove_new_lines(input_dir, output_dir):
 
     for file in file_list:
         print(f"File is: {file}")
-        dataset = load_dataset(input_dir, split="train", data_files = file)
+        dataset = load_dataset(input_dir, split="train", data_files = file, cache_dir=cache_dir)
         data_iter = iter(dataset)
 
         # Create output file
@@ -32,7 +34,10 @@ def remove_new_lines(input_dir, output_dir):
 
 
 if __name__ == "__main__":
-    input_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/preprocessed/big_load_shuffled/"
+    # ORIGINALLY:
+    # input_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/preprocessed/big_load_shuffled/"
+    # NEW 1/08/2023:
+    input_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/preprocessed/big_load/"
     output_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/preprocessed/big_load_shuffled_nonewlines/"
-    for tool in ["wikiSearch"]:
+    for tool in ["calendar"]:
         remove_new_lines(input_dir + tool, output_dir + tool)
