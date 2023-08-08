@@ -16,3 +16,4 @@ stats_*.txt
 /benchmarks/ToolBench
 benchmarks/TriviaQA/triviaqa-unfiltered.tar.gz
 model_training/models/tokenizer/tokenizer.json
+model_training/toolgpt/ToolGPT
