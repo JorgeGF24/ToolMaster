@@ -6,7 +6,8 @@ tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", cache_dir=cache
 TOOL_START_TOKEN = "<TOOL>"
 TOOL_END_TOKEN = "</TOOL>" 
 
-tokenizer.add_tokens([TOOL_START_TOKEN, TOOL_END_TOKEN, "[PAD]"])
+tokenizer.add_tokens([TOOL_START_TOKEN, TOOL_END_TOKEN])
+tokenizer.add_special_tokens({"pad_token":"[PAD]"})
 tokenizer.pad_token = "[PAD]"
 
-tokenizer.save_pretrained("/vol/bitbucket/jg2619/models/tokenizer/")
+tokenizer.save_pretrained("/vol/bitbucket/jg2619/augmenting_llms/model_training/models/tokenizer/")
