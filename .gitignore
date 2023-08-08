@@ -8,9 +8,10 @@
 *.log
 stats_*.txt
 *.model
+*.bin
+*.pyc
 
 /model_training/model_experiments/results
 /benchmarks/ToolQA
 /benchmarks/ToolBench
-__pycache__/tools.cpython-310.pyc
 benchmarks/TriviaQA/triviaqa-unfiltered.tar.gz
