@@ -15,3 +15,4 @@ stats_*.txt
 /benchmarks/ToolQA
 /benchmarks/ToolBench
 benchmarks/TriviaQA/triviaqa-unfiltered.tar.gz
+model_training/models/tokenizer/tokenizer.json
