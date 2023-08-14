@@ -2,6 +2,26 @@ import re
 from operator import add, sub, mul, truediv
 from beartype import beartype
 
+# TOKENS:
+
+TOKENS = {
+    "GPTJ": {
+        "TOOL_START_TOKEN": " <TOOL>",
+        "TOOL_END_TOKEN": "</TOOL>",
+        "PADDING_TOKEN": "[PAD]",
+    },
+    "GPT2": {
+        "TOOL_START_TOKEN": " <TOOL>",
+        "TOOL_END_TOKEN": "</TOOL>",
+        "PADDING_TOKEN": "[PAD]",
+    },
+    "LLAMA2": {
+        "TOOL_START_TOKEN": "<TOOL>",
+        "TOOL_END_TOKEN": "</TOOL>",
+        "PADDING_TOKEN": "[PAD]",
+    },
+}
+
 
 
 def Calendar(arg = "", date = None ):
@@ -14,6 +34,9 @@ def Calendar(arg = "", date = None ):
     else:
         now = datetime.datetime.now()
     return f'Today is {day_name[now.weekday()]}, {month_name[now.month]} {now.day}, {now.year}'
+
+def calend_parse(args: str):
+    return args
 
 
 def length_of_match(pattern, input_string):
