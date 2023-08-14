@@ -13,7 +13,8 @@ SECONDS=0
 source activate
 export PYTHONPATH=/vol/bitbucket/jg2619/augmenting_llms/:$PYTHONPATH
 echo "Evaluating Benchmarks on 48Gb job"
-python eval_benchmark.py
+# Datasets separated by ", ". 
+python eval_benchmark.py "test, asdiv, gms8k-easy, triviaQA" "AY" "DX"
 /usr/bin/nvidia-smi
 uptime
 duration=$SECONDS

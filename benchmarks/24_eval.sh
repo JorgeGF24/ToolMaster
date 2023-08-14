@@ -13,7 +13,7 @@ source activate
 export PYTHONPATH=/vol/bitbucket/jg2619/augmenting_llms/:$PYTHONPATH
 export CUDA_LAUNCH_BLOCKING=1
 echo $PYTHONPATH
-python eval_benchmark.py 24
+python eval_benchmark.py "asdiv, gms8k-easy" "AX"
 /usr/bin/nvidia-smi
 uptime
 duration=$SECONDS
