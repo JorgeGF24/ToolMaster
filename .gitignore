@@ -17,3 +17,6 @@ stats_*.txt
 benchmarks/TriviaQA/triviaqa-unfiltered.tar.gz
 model_training/models/tokenizer/tokenizer.json
 model_training/toolgpt/ToolGPT
+benchmarks/gms8k-easy-responses-*
+
+tokenizer.json
