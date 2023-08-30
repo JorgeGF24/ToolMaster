@@ -1,17 +1,19 @@
+import csv
 import random
-from transformers import AutoTokenizer, AutoModelForCausalLM, GPT2Tokenizer, GPT2LMHeadModel
+import sys
+
+import pandas as pd
+from transformers import AutoTokenizer, AutoModelForCausalLM, GPT2Tokenizer, GPT2LMHeadModel, DataCollatorForLanguageModeling, DataCollatorWithPadding, Trainer, TrainingArguments
 
 import torch
-from datasets import load_dataset, load_dataset_builder
+from datasets import load_dataset, load_dataset_builder, Features, Value, Dataset
 import os
 
 from functools import partial
 from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import Subset
 
-from transformers import Trainer, TrainingArguments
 import torch.nn as nn
-
-from sklearn.model_selection import train_test_split
 
 from model_training.model_experiments.GPTJ_layers import GPTJ_LAYERS
 
@@ -22,68 +24,87 @@ from beartype.typing import List, Dict, Tuple
 
 pad_sequence = partial(pad_sequence, batch_first=True)
 
+REMOVE_CALCULATOR = False
+ARG_TRAINING = False
 
-cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache/"
+TRAINING_DESCRIPTIONS = [
+    """increasing_relevance: Characteristics:
+        - Warmup 40 and LR: 5e-5
+        - batch size 4 gradient accum 2
+        - 100% description
+        - Data: shiny new""",
+    """increasing_relevance_2: This is the continuation of the increasing_relevance model. Changes:
+        - Warmup and lr -> 10% train and 1e-5 instead of 40 and 5e-5
+        - Try to add perplexity to the eval
+        - 0.15 chance of not adding tool avail prompt
+        - batch size 16 instead of 8
+        - Data: shiny new""",
+    """shuffled_DX5: This is the continuation of the increasing_relevance model. Changes:
+        - SAME
+        - SHUFFLE TO TEST IF INCREASING RELEVANCE IS GOOD
+        - Data: shiny new""",
+    """arg_training: Remove shuffle (increasing relevance with slight randomness, 20% I think)
+        - Train on tokens 4,5,6 as well (new addition)
+        - Increase prompt removal from 13 to 18, to account for the fact that arg generation has a diff prompt
+    """,
 
-train_data_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/train/definite_horizon/GPTJ"
-train_files = [file for file in os.listdir(train_data_dir) if file.endswith(".csv")]
-train_files = ["train3_tagged.csv"]
-len_data_files = len(train_files)
+    """arg_training, all data:
+        - Unfroze layers 0,1,7, 13, 19, >24
+        - Data is bigger (improved) DIDNT GO THROUGH, ITS SHINY NEW
+            - Relevance is increasing (BEFORE WAS DECREASING)
+            - Tools are intertwined randomly, and relevance increase PER tool
+        - 15% chance of not adding tool avail prompt
+""",
+    """full_data_fr, all data, for real:
+        - Unfroze layers 13, 19, >24
+        - Data is bigger (improved)
+            - Relevance is increasing
+            - Tools are intertwined randomly, and relevance increase PER tool
+        - 20% chance of not adding tool avail prompt
+""",
+    """just_gen, all data, for real:
+        - Unfroze layers >24
+        - Data is bigger (improved)
+            - Relevance is increasing
+            - Tools are intertwined randomly, and relevance increase PER tool
+        - 0% chance of not adding tool avail prompt
+        - NO ARG TRAINING
+""",
+   """Micky, Better training set, same as before,
+        - 0 to 23 frozen except 13 and 19 (one less than before)""",
+    """Micky-no-calc, Micky, with no calculator""",
+"""distracted has improvement of not including main tools as distractors.
+        - Everything same as Mickey
+        - LESS LAYERS RRAINED. Freeze from 0 to 24 inclusive
+        - Data is "better" """,
 
-MODEL_NAME = "GPTJ"
+""" Small set and distracted,
+- Same as distracted with small set
+- Warmup 7%""",
 
-if MODEL_NAME == "GPT2":
-    model = GPT2LMHeadModel.from_pretrained("gpt2", cache_dir=cache_dir)
-    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
-elif MODEL_NAME == "GPTJ":
-    model = AutoModelForCausalLM.from_pretrained(
-            "EleutherAI/gpt-j-6B",
-            revision="float16",
-            torch_dtype=torch.float16,
-            low_cpu_mem_usage=True,          # CANT HANDLE DEEPSPEED ZERO 3
-            cache_dir=cache_dir 
-        ).cuda()
-    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", truncate=True, max_length=270, cache_dir=cache_dir)
+"""Small-no-calc: Small set and distracted, no calc,
+- Same as distracted with small set and no calc
+- Warmup 7%
+- 2000 Calc, 4000 wiki, 1000 Calend""",
 
-TOOL_START_TOKEN = "<TOOL>"
-TOOL_END_TOKEN = "</TOOL>" 
+"""Med set:
+- Same but:
+- 3000 Calc, 6000 wiki, 2000 Calend""",
 
-if MODEL_NAME == "GPTJ":
-    TOOL_START_TOKEN = " " + TOOL_START_TOKEN
+"""Med-no-calc:
+- Same but:
+- no calc
+- 3000 Calc, 6000 wiki, 2000 Calend""",
 
-
-tokenizer.add_tokens([TOOL_START_TOKEN, TOOL_END_TOKEN])
-
-"""
-tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", padding=True, truncate=True, max_length=270)
-tokenizer.add_tokens('[PAD]')
-
-model = AutoModelForCausalLM.from_pretrained(
-        "EleutherAI/gpt-j-6B",
-        revision="float16",
-        torch_dtype=torch.float16,
-        low_cpu_mem_usage=True
-).cuda()"""
-
-model.resize_token_embeddings(len(tokenizer))
-print(f"Len tokenizer: {len(tokenizer)}")
-
-DEVICE = model.device
-
-FROZEN_LAYERS = []
-TRAINED_LAYERS = []
-for i in range(0, 23):
-    FROZEN_LAYERS += GPTJ_LAYERS[f"Layer {i}"]
-
-# Freeze some layers in the architecture
-for name, param in model.named_parameters():
-    if name in FROZEN_LAYERS:
-        param.requires_grad = False
-    else:
-        TRAINED_LAYERS.append(name)
+"""Med_arg:
+- Same but:
+- 3000 Calc, 6000 wiki, 2000 Calend""",
 
 
-available_tools_prompt = "The following tools are available: "
+"""Large set:
+- Same but:
+- 6000 Calc, 12000 wiki, 4000 Calend""",
+]
 
 tool_name_alternatives = {
     "Calculator":{"mix":["Calculator","calculator","CALCULATOR"
@@ -134,6 +155,13 @@ tool_name_alternatives = {
                              "DivisionTool","divisionTool","DIVISIONTOOL",
                              "DividingTool","dividingTool","DIVIDINGTOOL",
                              "DivideTool","divideTool","DIVIDETOOL",],
+                  "mult_divide": ["CalcMultDiv","calcMultDiv","CALC_MULT_DIV",
+                                  "Calc_mult_div","Calc_Mult_Div","calc_mult_div",
+                                  "mult_divide_tool","MultDivideTool","MULTDIVIDETOOL",
+                                    "MultDiv","multDiv","MULTDIV",
+                                    "MultDivTool","multDivTool","MULTDIVTOOL",
+                                    "MultDivide","multDivide","MULTDIVIDE",],
+
         },
     "WikiSearch":["WikiSearch","wikisearch","WIKISEARCH","Wiki-search","wiki-Search","WIKI-SEARCH","Wiki_search","Wiki_Search","WIKI_SEARCH",
                   "Search","search","SEARCH",
@@ -159,6 +187,22 @@ tool_name_alternatives = {
                   "FactSeek","factSeek","FACTSEEK","Fact_seek","Fact-Seek","FACT-SEEK","Fact_seek","Fact_Seek","FACT_SEEK",
                   "Encyclopedia","encyclopedia","ENCYCLOPEDIA",
                   "Encyclopaedia","encyclopaedia","ENCYCLOPAEDIA",
+                    "Encyclopedic","encyclopedic","ENCYCLOPEDIC",
+                    "InfoTool","infoTool","INFOTOOL","Info_tool","Info-Tool","INFO-TOOL","Info_tool","Info_Tool","INFO_TOOL",
+                    "InfoAPI","infoAPI","INFOAPI","Info_api","Info-API","INFO-API","Info_api","Info_Api","INFO_API",
+                    "WikiAPI","wikiAPI","WIKIAPI","Wiki_api","Wiki-API","WIKI-API","Wiki_api","Wiki_Api","WIKI_API",
+                    "BrowserAPI","browserAPI","BROWSERAPI","Browser_api","Browser-API","BROWSER-API","Browser_api","Browser_Api","BROWSER_API",
+                    "SearchAPI","searchAPI","SEARCHAPI","Search_api","Search-API","SEARCH-API","Search_api","Search_Api","SEARCH_API",
+                    "SearchTool","searchTool","SEARCHTOOL","Search_tool","Search-Tool","SEARCH-TOOL","Search_tool","Search_Tool","SEARCH_TOOL",
+                    "BrowserTool","browserTool","BROWSERTOOL","Browser_tool","Browser-Tool","BROWSER-TOOL","Browser_tool","Browser_Tool","BROWSER_TOOL",
+                    "FindMyInfo","findMyInfo","FINDMYINFO","Find_my_info","Find-My-Info","FIND-MY-INFO","Find_my_info","Find_My_Info","FIND_MY_INFO",
+                    "FindMyFact","findMyFact","FINDMYFACT","Find_my_fact","Find-My-Fact","FIND-MY-FACT","Find_my_fact","Find_My_Fact","FIND_MY_FACT",
+                    "FactFinder","factFinder","FACTFINDER","Fact_finder","Fact-Finder","FACT-FINDER","Fact_finder","Fact_Finder","FACT_FINDER",
+                    "FactAPI","factAPI","FACTAPI","Fact_api","Fact-API","FACT-API","Fact_api","Fact_Api","FACT_API",
+                    "FactTool","factTool","FACTTOOL","Fact_tool","Fact-Tool","FACT-TOOL","Fact_tool","Fact_Tool","FACT_TOOL",
+                    "InfoEngine","infoEngine","INFOENGINE","Info_engine","Info-Engine","INFO-ENGINE","Info_engine","Info_Engine","INFO_ENGINE",
+                    "InfoExpert","infoExpert","INFOEXPERT","Info_expert","Info-Expert","INFO-EXPERT","Info_expert","Info_Expert","INFO_EXPERT",
+                    "DataEngine","dataEngine","DATAENGINE","Data_engine","Data-Engine","DATA-ENGINE","Data_engine","Data_Engine","DATA_ENGINE",
                 ],
     "Calendar":["Calendar","calendar","CALENDAR",
                 "Date","date","DATE",
@@ -628,7 +672,29 @@ tool_desc = {
             "simplifies the process of working with addition and subtraction",
             "designed for quick and accurate combined calculations",
             "efficiently handles both addition and subtraction tasks"
-        ]
+        ],
+        "mult_divide": [
+            "Performs multiplication and division operations",
+            "Calculates products and quotients quickly",
+            "Efficient tool for both multiplication and division",
+            "Simplifies complex multiplicative and divisive tasks",
+            "Streamlines finding products and quotients",
+            "Specializes in multiplication and division",
+            "Tailored for efficient numeric operations",
+            "Hassle-free tool for quick multiplication and division",
+            "Rapid calculator for both tasks",
+            "Efficiently handles numerical multiplication and division",
+            "Comprehensive solution for accurate math",
+            "Quickly computes products and divisions",
+            "Simplifies working with multiplication and division",
+            "Aids in quick numeric operations",
+            "Versatile tool for accurate math tasks",
+            "Designed for efficiency in both tasks",
+            "Enhances productivity with multiplication and division",
+            "Efficient way to work with numbers",
+            "Quick and accurate multiplication and division",
+            "Versatile solution for math calculations"
+        ],
     },
     "WikiSearch": [
         "fetches Wikipedia snippets for search queries",
@@ -1328,12 +1394,16 @@ tool_desc = {
 
 }
 
+if REMOVE_CALCULATOR:
+    tool_name_alternatives["Calculator"] = {}
+    tool_desc["Calculator"] = {}
+
 for key, value in tool_name_alternatives["Calculator"].items():
     tool_name_alternatives[key] = value
 
 for key, value in tool_desc["Calculator"].items():
     tool_desc[key] = value
-    
+
 for key, value in tool_name_alternatives.items():
     if isinstance(value, list):
         # Transform to set
@@ -1344,6 +1414,9 @@ for key, value in tool_desc.items():
         # Transform to set
         tool_desc[key] = list(set(value))
 
+def filter_all_caps(name_dict):
+    pass
+    #TODO
 
 # Train3 has:   
 # Calculator:   1279   1517  4596
@@ -1356,90 +1429,84 @@ for key, value in tool_desc.items():
 # Calendar:     5899         7927
 # WikiSearch:   10290        10290
 
+cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache/"
+MODEL_NAME = "GPTJ"
+DEVICE = "cuda"
+if MODEL_NAME == "GPT2":
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
+else:
+    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", truncate=True, max_length=270, cache_dir=cache_dir)
+
+
+tokenizer.pad_token = tokenizer.eos_token
+
+
+def perplexity(dataset):
+    # Dataset is a tuple of predictions and labels
+
+    average_perplexity = 0
+    examples = 0
+
+    for pred, lab in zip(dataset):
+        examples += 1
+        loss_fct = torch.nn.functional.cross_entropy(pred.reshape(-1, pred.shape[-1]), lab.view(-1), reduction='sum')
+
+        average_perplexity += torch.exp(loss_fct)
+
+    average_perplexity /= examples
+    return {"perplexity": average_perplexity}
+
+
+def tokenize_function(example):
+    input = tokenizer(example["text"], truncation=True, max_length=300)
+
+    return {"input_ids": input["input_ids"]}
+
+#val_dataset = load_dataset("/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/unprocessed/segment_ccnet_unprocessed", data_files=["1000_examples_not_in_training.csv"], split="train")
+#val_dataset = val_dataset.map(tokenize_function, batched=True, remove_columns=val_dataset.column_names)
 
 
 # Dataset classes and collate functions
 @beartype
 class ToolDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset, tokenizer, percentage:float = 1.0):
+    def __init__(self, dataset, tokenizer):
 
-        calendar_examples = 2505*percentage
-        wiki_examples = 2505*percentage
-
-        self.texts = []
-        self.token_type = []
-        self.tool_names = []
-        self.calc_subtypes = []
-
-        if "tool_name" in dataset:
-            tool_names = dataset["tool_name"]
-        else:
-            tool_names = []
-
-
-        print(f"Len of tool_names: {len(tool_names)}")
-        # Iterate through the whole dataset:
-        for i in range(len(tool_names)):
-            # Get the tool name
-            tool_name = tool_names[i]
-            
-            if tool_name == "Calendar" and calendar_examples > 0:
-                self.texts.append(dataset["tokenized_text"][i])
-                self.token_type.append(dataset["token_type"][i])
-                self.tool_names.append(tool_name)
-                self.calc_subtypes.append(None)
-                calendar_examples -= 1
-            elif tool_name == "WikiSearch" and wiki_examples > 0:
-                self.texts.append(dataset["tokenized_text"][i])
-                self.token_type.append(dataset["token_type"][i])
-                self.tool_names.append(tool_name)
-                self.calc_subtypes.append(None)
-                wiki_examples -= 1
-            elif tool_name == "Calculator":
-                ops_used = ast.literal_eval(dataset["ops_used"][i])
-                if ops_used[0] + ops_used[1] == 0:
-                    self.texts.append(dataset["tokenized_text"][i])
-                    self.token_type.append(dataset["token_type"][i])
-                    self.tool_names.append(tool_name)
-                    self.calc_subtypes.append(dataset["op_label"][i])
-                    # 10% chance:
-                    if random.random() < 0.1:
-                        self.texts.append(dataset["tokenized_text"][i])
-                        self.token_type.append(dataset["token_type"][i])
-                        self.tool_names.append(tool_name)
-                        self.calc_subtypes.append(dataset["op_label"][i])
-
-
-
-        """
-        self.start_texts = dataset["start_tokenized_tool_text"]
-        self.end_texts = dataset["end_tokenized_tool_text"]
-        self.start_masks = dataset["start_method_A_train_mask"]
-        self.end_masks = dataset["end_method_A_train_mask"]
-        self.tool_names = dataset["tool_name"]"""
+        self.texts = dataset["tokenized_text"]
+        self.token_type = dataset["token_type"]
+        self.tool_names = dataset["tool_name"]
+        self.calc_subtypes = dataset["op_label"]
         self.tokenizer = tokenizer
+
 
     def __len__(self):
         return len(self.texts)
     
     def __getitem__(self, idx):
+
         tokenized_text = ast.literal_eval(self.texts[idx])
         token_type = ast.literal_eval(self.token_type[idx])
 
         assert len(tokenized_text) == len(token_type), f"Lengths of tokenized text and tokenized type are not equal: {len(tokenized_text)} != {len(token_type)}"
-        """
-        start_text = self.start_texts[idx]
-        end_text = self.end_texts[idx]
-        start_mask = self.start_mask[idx]
-        end_mask = self.end_mask[idx]"""
 
         return tokenized_text, token_type, self.tool_names[idx], self.calc_subtypes[idx]
 
-DEBUG = True
-long_tensor = partial(torch.tensor, dtype=torch.long, device=DEVICE)
-int_tensor = partial(torch.tensor, dtype=torch.long, device=DEVICE)
-is_not_response = partial(torch.isin, test_elements=int_tensor([0,1,2,3,9]))
-PAD_ID = tokenizer.eos_token_id
+class RawDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset, tokenizer, model):
+
+        self.texts = dataset["text"]
+        self.tokenizer = tokenizer
+        self.model = model
+
+
+    def __len__(self):
+        return len(self.texts)
+    
+    def __getitem__(self, idx):
+        tokenized_text = self.tokenizer(self.texts[idx], truncation=True, max_length=270, return_tensors="pt")
+        if isinstance(tokenized_text, dict):
+            tokenized_text = tokenized_text["input_ids"]
+
+        return self.model.prepare_inputs_for_generation(tokenized_text)
 
 
 def come_as_you_are_collate_fn(batch):
@@ -1461,12 +1528,16 @@ def come_as_you_are_collate_fn(batch):
 
     return texts, masks
 
-AVAILABLE_TOOLS_PROMPT = "These are the available tools: [TOOLS].\n\n"
+AVAILABLE_TOOLS_PROMPT = "These are the available tools: \n[TOOLS].\n\n"
 AVAILABLE_RANGE = [1,4]
 CALC_SUBSETS = list(tool_name_alternatives["Calculator"].keys())
 TOOL_NAME_COUNT = {key:len(value) for key, value in tool_name_alternatives.items() if key != "Calculator"}
+DISTRACTOR_TOOLS = [key for key in tool_name_alternatives if key not in ["Calculator", "Calendar", "WikiSearch"]]
+print(f"Distractors: {DISTRACTOR_TOOLS}")
 #TOOL_NAME_COUNT["Calculator"] = sum(len(tool_name_alternatives["Calculator"].values()))
-CALC_SUB_NUMS = {key:len(value) for key, value in tool_name_alternatives["Calculator"].items()}
+DESC_CHANCE = 1
+PROMPT_REMOVAL_P = 0.0
+SHUFFLE = False
 
 @beartype
 def choose(tools:List[str])->str:
@@ -1486,7 +1557,9 @@ def random_tool_descriptor(main_tool:str, calc_sub=None)->Tuple[str,str]:
         if calc_sub is not None:
             opts = [calc_sub, "mix"]
             if calc_sub in ["add", "subtract"]:
-                opts.add("add_subtract")
+                opts.append("add_subtract")
+            if calc_sub in ["multiply", "divide"]:
+                opts.append("mult_divide")
             main_tool = choose(opts)
         else:
             main_tool = choose(CALC_SUBSETS)
@@ -1494,27 +1567,34 @@ def random_tool_descriptor(main_tool:str, calc_sub=None)->Tuple[str,str]:
     main_name = random.choice(tool_name_alternatives[main_tool])
 
     # random 22% chance:
-    if random.random() < 0.22:
+    if random.random() < DESC_CHANCE:
         tools.add(f"{main_name} ({random.choice(tool_desc[main_tool])})")
     else:
         tools.add(main_name)
 
     while len(tools) < num_tools:
         # Get a random tool from 
-        base_name = choose(list(TOOL_NAME_COUNT.keys()))
+        base_name = choose(DISTRACTOR_TOOLS)
         base_names.append(base_name)
 
         rand_name = random.choice(tool_name_alternatives[base_name])
 
         # random 22% chance:
-        if random.random() < 0.22:
+        if random.random() < DESC_CHANCE:
             rand_name = f"{rand_name} ({random.choice(tool_desc[base_name])})"
         tools.add(rand_name)
 
-    return ", ".join(tools), main_name
+    pretty_tools = []
+    for tool in tools:
+        pretty_tools.append(f"  - {tool}")
+
+    return "\n".join(pretty_tools), main_name
+
+long_tensor = partial(torch.tensor, dtype=torch.long, device=DEVICE)
+int_tensor = partial(torch.tensor, dtype=torch.long, device=DEVICE)
+
+eval_collator = DataCollatorWithPadding(tokenizer)
     
-
-
 def change_name_collate_fn(batch):
     
     texts, data_token_types, tool_names, calc_subtypes = zip(*batch, strict=True)
@@ -1537,6 +1617,8 @@ def change_name_collate_fn(batch):
     tool_cohorts, main_tools = zip(*map(random_tool_descriptor, tool_names, calc_subtypes), strict=True)
 
     prompts = map(lambda cohort: AVAILABLE_TOOLS_PROMPT.replace("[TOOLS]", cohort), tool_cohorts)
+    # Random PROMPT_REMOVAL_P% chance of removing the prompt
+    prompts = map(lambda prompt: prompt if random.random() > PROMPT_REMOVAL_P else "", prompts)
     prompts = list(map(tokenizer.encode, prompts))
     token_types[0] = list(map(lambda prompt: [7,]*len(prompt), prompts))
     main_tools = list(map(tokenizer.encode, main_tools))
@@ -1549,39 +1631,48 @@ def change_name_collate_fn(batch):
     add_4 = lambda tuple_of_lists: [item for sublist in tuple_of_lists for item in sublist]
 
     processed_texts = list(map(add_4, zip(prompts, start_texts, main_tools, end_texts, strict=True)))
+    merged_token_types = list(map(add_4, zip(*token_types, strict=True)))
 
-    token_types = list(map(add_4, zip(*token_types, strict=True)))
+    for text, mask in zip(processed_texts, merged_token_types):
+        assert len(text) == len(mask), f"Shapes dont match: {len(text)} != {len(mask)}"
 
-    batch = zip(processed_texts, token_types, tool_names, calc_subtypes, strict=True)
-    return come_as_you_are_collate_fn(batch)
+    texts = list(map(long_tensor, processed_texts))
+    texts = pad_sequence(texts, padding_value=PAD_ID)
 
-    texts = pad_sequence(texts, batch_first=True)
-    masks = pad_sequence(masks, batch_first=True)
-    return texts, mask
+    merged_token_types = list(map(int_tensor, merged_token_types))
+    masks = list(map(is_not_response, merged_token_types))
+    masks = pad_sequence(masks, padding_value=0)
 
-# Arange of tensors from 0 to 2*3*4:
-# >>> torch.arange(24).reshape(2,3,4)
-#data_files=dataset_dir[len_data_files*0.8:]
-#data_files=dataset_dir[:len_data_files*0.8]
-print(f"Loading dataset from {train_data_dir} and files {train_files}")
+    for text, mask in zip(texts, masks):
+        assert text.shape == mask.shape, f"Shapes dont match: {text.shape} != {mask.shape}"
 
-ds_builder = load_dataset_builder(train_data_dir, data_files=train_files, cache_dir=cache_dir)
-print(ds_builder.info.features)
-train_dataset = load_dataset(train_data_dir, data_files = train_files, split="train", cache_dir=cache_dir)
+    if ARG_TRAINING:
+        print(type(token_types))
+        print(type(token_types[3]))
+        resp_indexes = list(map(lambda token_type: token_type.index(6), token_types[3]))
+        end_texts, token_types[3] = zip(*map(lambda text, token_type, idx: (text[:idx], token_type[:idx]), end_texts, token_types[3], resp_indexes))
+        arg_texts = list(map(add_4, zip(start_texts, main_tools, end_texts, strict=True)))
+        arg_token_types = list(map(add_4, zip(token_types[1], token_types[2], token_types[3], strict=True)))
 
-print("MADE IT PAST")
+        for text, mask in zip(arg_texts, arg_token_types):
+            assert len(text) == len(mask), f"Shapes dont match: {len(text)} != {len(mask)}"
 
-# Get a random 20% of the training data, as it is too big
-# train_dataset = train_dataset.shuffle(seed=42).select(range(int(len(train_dataset)*0.2)))
+        arg_texts = list(map(long_tensor, arg_texts))
+        arg_texts = pad_sequence(arg_texts, padding_value=PAD_ID)
 
-# Do a 90/10 split for validation randomly
-train_dataset, val_dataset = train_test_split(train_dataset, test_size=0.1, random_state=42)
+        arg_token_types = list(map(int_tensor, arg_token_types))
+        arg_masks = list(map(is_arg, arg_token_types))
+        arg_masks = pad_sequence(arg_masks, padding_value=0)
 
-train_dataset = ToolDataset(train_dataset,tokenizer,0.9)
-test_dataset = ToolDataset(val_dataset,tokenizer,0.1)
+        for text, mask in zip(arg_texts, arg_masks):
+            assert text.shape == mask.shape, f"Shapes dont match: {text.shape} != {mask.shape}"
+
+        return (texts, arg_texts), (masks, arg_masks)
+
+    return texts, masks
+
 
 # Override the Trainer class to use our loss function
-
 class MyTrainer(Trainer):
 
     # On init, init super class:
@@ -1589,11 +1680,16 @@ class MyTrainer(Trainer):
         super().__init__(*args, **kwargs)
 
     def compute_loss(self, model, inputs, return_outputs=False):
-        tokenized_data, mask = inputs
+        tokenized_data, masks = inputs
 
-        mask = mask[:,1:]  #Prediction starts from second token
+        if not isinstance(tokenized_data, tuple):
+            tokenized_data = (tokenized_data,)
+            masks = (masks,)
 
-        outputs = model(**{"input_ids":tokenized_data[:,:-1]}, use_cache=False)
+        masks = [mask[:,1:] for mask in masks] #Prediction starts from second token
+
+        inputs = [model.prepare_inputs_for_generation(data[:,:-1], use_cache=False) for data in tokenized_data]
+        outputs = [model(**input_data) for input_data in inputs]
 
         # For debbuging purposes, print columns with 1. Decoded token, 2. mask value:
         # The columns should be well padded with spaces, so that the mask values are aligned
@@ -1602,54 +1698,182 @@ class MyTrainer(Trainer):
         # <TOOL>    //      1
         # <TOOL>    //      1
         # You       //      0
+        logits = [out.logits for out in outputs]
+
+        if DEBUG:
+            # SIZES OF INPUTS:
+            for token_data, mask, logit in zip(tokenized_data, masks, logits):
+                print(f"Tokenized data size: {token_data.shape}")
+                print("Data      //    mask:")
+                for i, sentence in enumerate(token_data[:5,1:]):
+                    print(f"First word: {tokenizer.decode(token_data[i,0])}")
+                    for j, token in enumerate(sentence):
+                        print(f"Label: {tokenizer.decode(token):<12} // Pred: {tokenizer.decode(logit[i][min(logit.shape[1]-1,j)].argmax().item()):<12} // {mask[i][min(mask.shape[1]-1,j)].item():>3}")
+        
+        # print(f"Masks size: {mask.shape}")
+        masks = [mask.reshape(-1).bool() for mask in masks]
+        logits = torch.cat([logit.reshape(-1, logit.shape[-1])[mask] for logit, mask in zip(logits, masks)])
+        tokenized_data = torch.cat([token_data[:,1:].reshape(-1)[mask] for token_data, mask in zip(tokenized_data, masks)])
+        loss = torch.nn.functional.cross_entropy(logits, tokenized_data)
+
         if DEBUG:
             # SIZES OF INPUTS:
             print(f"Tokenized data size: {tokenized_data.shape}")
-            print("Data      //    mask:")
-            logits = outputs.logits
-            for i, sentence in enumerate(tokenized_data[:5,1:]):
-                print(f"First word: {tokenizer.decode(tokenized_data[i,0])}")
-                for j, token in enumerate(sentence):
-                    print(f"Label: {tokenizer.decode(token):<12} // Pred: {tokenizer.decode(logits[i][min(logits.shape[1]-1,j)].argmax().item()):<12} // {mask[i][min(mask.shape[1]-1,j)].item():>3}")
-        
-        mask = mask.view(-1).bool()
-        print(mask[logits.shape[0]:])
-        logits = outputs.logits
-        logits = logits.view(-1, logits.shape[-1])[mask]
-        tokenized_data = tokenized_data[:,1:].view(-1)[mask]
-        loss = torch.nn.functional.cross_entropy(logits, tokenized_data)
 
+            print("Data      //    mask:")
+            for i, word in enumerate(tokenized_data):
+                print(f"Label: {tokenizer.decode(word):<12} // Pred: {tokenizer.decode(logits[i].argmax().item()):<12}  loss avg = {loss.item()}")
+        
         if DEBUG:
             print(f"Loss:{loss.item()}")
 
         return (loss, outputs) if return_outputs else loss
-    
+
+
+train_data_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/train/curated/GPTJ_med_set/"
+train_files = [file for file in os.listdir(train_data_dir) if file.endswith(".csv")]
+train_files = ["train_short.csv"]
+raw_train_files = [f"{file[:-4]}_texts.csv" for file in train_files]
+#train_files = ["train3_tagged.csv"]
+# If raw is provided as a command line argument, make it true:
+RAW = "raw" in sys.argv
+
+INT_COLUMNS = ['length', 'nlines', 'original_nlines', 'original_length', 'duplicity_ranking_tool', 'duplicity_ranking_global']
+FLOAT_COLUMNS = ['position', 'loss_improvement', 'language_score', 'perplexity', "relevance"]
+
+train_columns = []
+if not RAW:
+
+    train_df = pd.read_csv(os.path.join(train_data_dir, train_files[0]))
+
+    if REMOVE_CALCULATOR:
+        train_df = train_df[train_df["tool_name"] != "Calculator"].reset_index(drop=True)
+    # Read first line in train file:
+    with open(os.path.join(train_data_dir, train_files[0]), "r") as f:
+        train_header = f.readline()
+        train_columns = train_header.strip().split(",")
+
+
+    train_df = pd.read_csv(os.path.join(train_data_dir, train_files[0]))
+
+    if REMOVE_CALCULATOR:
+        train_df = train_df[train_df["tool_name"] != "Calculator"].reset_index(drop=True)
+
+    train_dataset = Dataset.from_pandas(train_df)
+
+    print("Loaded dataset")
+
+else:
+    # Read first line in train file:
+    with open(os.path.join(train_data_dir, raw_train_files[0]), "r") as f:
+        train_header = f.readline()
+        train_columns = train_header.strip().split(",")
+
+    feat_dict = {key: Value(dtype='string', id=None) for key in train_columns}
+    feat_dict.update({key: Value(dtype='int64', id=None) for key in INT_COLUMNS if key in train_columns})
+    feat_dict.update({key: Value(dtype='float32', id=None) for key in FLOAT_COLUMNS if key in train_columns})
+    features = Features(feat_dict)
+
+    print(f"Loading dataset from {train_data_dir} and files {raw_train_files}")
+    raw_dataset = load_dataset(train_data_dir, data_files = raw_train_files, features=features, split="train", cache_dir=cache_dir)
+    print("Loaded dataset")
 
 
 
-# Train the model
+
+TOOL_START_TOKEN = "<TOOL>"
+TOOL_END_TOKEN = "</TOOL>" 
+
+if MODEL_NAME == "GPTJ":
+    TOOL_START_TOKEN = " " + TOOL_START_TOKEN
+
+TRAIN_NAME = "medd" # "increasing_relevance_2" # "no_duplicates_2"
+
 training_args = TrainingArguments(
     output_dir="./results/test", # The output directory
     overwrite_output_dir=True, # overwrite the content of the output directory
     num_train_epochs=1, # number of training epochs
-    per_device_train_batch_size=1, # batch size for training
-    per_device_eval_batch_size=1,  # batch size for evaluation
-    eval_steps = 100, # Number of update steps between two evaluations.
-    save_steps=1000, # after # steps model is saved
-    warmup_steps=500,# number of warmup steps for learning rate scheduler
+    per_device_train_batch_size=8, # batch size for training
+    #per_device_eval_batch_size=1,  # batch size for evaluation
+    #eval_steps = 10000, # Number of update steps between two evaluations.
+    #evaluation_strategy = "steps",
+    save_steps=500, # after # steps model is saved
+    warmup_steps=40,# number of warmup steps for learning rate scheduler
+    learning_rate=1e-5,
     dataloader_pin_memory=False,
     do_train=True,
     deepspeed="/vol/bitbucket/jg2619/augmenting_llms/model_training/model_experiments/ds_conf.json",
-    gradient_accumulation_steps=16,
+    gradient_accumulation_steps=2,
+    evaluation_strategy="no",
+    do_eval=False
 )
 
-trainer = MyTrainer(
-    model=model, # the instantiated 🤗 Transformers model to be trained
-    args=training_args, # training arguments, defined above
-    train_dataset=train_dataset, # training dataset
-    eval_dataset=test_dataset, # evaluation dataset
-    data_collator = change_name_collate_fn,
-)
+
+
+def load_model(new_tokens = True):
+    if MODEL_NAME == "GPT2":
+        model = GPT2LMHeadModel.from_pretrained("gpt2", cache_dir=cache_dir)
+    elif MODEL_NAME == "GPTJ":
+        model = AutoModelForCausalLM.from_pretrained(
+            "EleutherAI/gpt-j-6B",
+            revision="float16",
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True,          # CANT HANDLE DEEPSPEED ZERO 3
+            cache_dir=cache_dir 
+        ).cuda()
+
+    if new_tokens:
+        tokenizer.add_tokens([TOOL_START_TOKEN, TOOL_END_TOKEN])
+        tokenizer.pad_token = tokenizer.eos_token
+        model.resize_token_embeddings(len(tokenizer))
+        print(f"Len tokenizer: {len(tokenizer)}")
+
+    unfrozen_count = 0
+    unfrozen_size = 0
+    total_count = 0
+    total_size = 0
+    FROZEN_LAYERS = []
+    TRAINED_LAYERS = []
+    for i in range(0, 25):
+        FROZEN_LAYERS += GPTJ_LAYERS[f"Layer {i}"]
+
+    # Freeze some layers in the architecture
+    for name, param in model.named_parameters():
+        total_count += param.numel()
+        total_size += param.numel() * param.element_size()
+        if name in FROZEN_LAYERS:
+            param.requires_grad = False
+        else:
+            TRAINED_LAYERS.append(name)
+            unfrozen_count += param.numel()
+            unfrozen_size += param.numel() * param.element_size()
+
+    print(f"Unfrozen layers: {unfrozen_count} parameters, {unfrozen_size/1e6} MB")
+    print(f"Training {unfrozen_count/total_count*100}% of params representing {unfrozen_size/total_size*100}% of size")
+
+    return model
+
+
+
+DEBUG = True
+is_not_response = partial(torch.isin, test_elements=int_tensor([0,1,2,3,8]))
+is_arg = partial(torch.isin, test_elements=int_tensor([4,5]))
+PAD_ID = tokenizer.pad_token_id
+
+
+# Arange of tensors from 0 to 2*3*4:
+# >>> torch.arange(24).reshape(2,3,4)
+#data_files=dataset_dir[len_data_files*0.8:]
+#data_files=dataset_dir[:len_data_files*0.8]
+print("MADE IT PAST")
+
+# Get a random 20% of the training data, as it is too big
+# train_dataset = train_dataset.shuffle(seed=42).select(range(int(len(train_dataset)*0.2)))
+
+# Do a 90/10 split for validation randomly
+# Train the model
+
+
 
 # TODO
 #CHECKPOINTING
@@ -1658,14 +1882,72 @@ trainer = MyTrainer(
 print("END OF SETUP")
 
 def main():
+    global raw_dataset, train_dataset
 
-    print("GONNA TRAIN")
-    trainer.train()
+    if not RAW:
+        model = load_model(new_tokens=True)
 
-    # Print cuda memory summary
-    print(torch.cuda.memory_summary())
+        train_dataset = ToolDataset(train_dataset,tokenizer) 
 
-    model.save_pretrained("/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_no_add")
+        if SHUFFLE:
+            random.seed(42)
+
+            indices = list(range(len(train_dataset)))
+            random.shuffle(indices)
+
+            train_dataset = Subset(train_dataset, indices)
+
+        training_args.warmup_steps = len(train_dataset)*7 // 100
+
+        trainer = MyTrainer(
+            model=model, # the instantiated 🤗 Transformers model to be trained
+            args=training_args, # training arguments, defined above
+            train_dataset=train_dataset, # training dataset
+            data_collator = change_name_collate_fn,
+        )
+
+        print("GONNA TRAIN")
+        trainer.train()
+
+        # Print cuda memory summary
+        print(torch.cuda.memory_summary())
+
+        save_file = f"/vol/bitbucket/jg2619/augmenting_llms/model_training/models/{MODEL_NAME}_{TRAIN_NAME}"
+        print(f"Saving model to {save_file}")
+
+        model.save_pretrained(save_file)
+    else:
+
+        model = load_model(new_tokens=False)
+        
+        raw_dataset = raw_dataset.map(tokenize_function, batched=True, remove_columns=train_columns)
+
+        training_args.warmup_steps = len(raw_dataset) // 10
+
+        trainer = Trainer(
+            model=model, # the instantiated 🤗 Transformers model to be trained
+            #tokenizer=tokenizer,
+            args=training_args, # training arguments, defined above
+            train_dataset=raw_dataset, # training dataset
+            eval_dataset=val_dataset, # evaluation dataset
+            data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
+            compute_metrics=perplexity,
+        )
+
+        print("GONNA TRAIN")
+        trainer.train()
+
+        # Print cuda memory summary
+        print(torch.cuda.memory_summary())
+
+        save_file = f"/vol/bitbucket/jg2619/augmenting_llms/model_training/models/{MODEL_NAME}_{TRAIN_NAME}_raw"
+        print(f"Saving model to {save_file}")
+
+        model.save_pretrained(save_file)
+
+    # Write the latest training description to a txt file in save_file dir:
+    with open(f"{save_file}/training_description.txt", "w") as f:
+        f.write(TRAINING_DESCRIPTIONS[-1])
 
 
 if __name__ == "__main__":
