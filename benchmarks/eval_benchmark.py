@@ -7,7 +7,9 @@
 
 import csv
 import datetime
+import logging
 import os
+import random
 import sys
 import json
 import time
@@ -25,63 +27,144 @@ from functools import partial
 from copy import deepcopy
 
 from beartype import beartype
-from beartype.typing import List, Dict, Any, Union
+from beartype.typing import List, Dict, Any, Union, Callable
+
+
+formatter = logging.Formatter('%(asctime)s:  %(message)s', datefmt='%m/%d/%Y %I:%M:%S  ')
+
+eval_logs_dir = "./evaluation_logs"
+if not os.path.exists(eval_logs_dir):
+    os.makedirs(eval_logs_dir)
+
+eval_logs_debug_dir = "./evaluation_logs_debug"
+if not os.path.exists(eval_logs_debug_dir):
+    os.makedirs(eval_logs_debug_dir)
+
+STREAM_HANDLER = logging.StreamHandler(sys.stdout)
+STREAM_HANDLER.setLevel(logging.WARN)
+STREAM_HANDLER.setFormatter(formatter)
+
+LOGGER = logging.getLogger(__name__)
+LOGGER.setLevel(logging.DEBUG)
+LOGGER.addHandler(STREAM_HANDLER)
+
+TOOLMASTER_LOGGER = logging.getLogger("Toolmaster")
 
 Calculator = partial(Calculator, inference=True)
 
-
 cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache"
 
-TOOL_DOCUMENTATION = {"Calculator": """The calculator tool computes arithmetic expressions. You can call the API by writing "[Calculator(expression)]" where "expression" is the expression to be computed. Here are some examples of its usage:
-Example 1: Last year we collected 237342 apples, double of what we collected this year: [Calculator(237342/2)→ 118671] 118671.
-Example 2: The number in the next term is 18 + 12 x 3 = [Calculator(18+(12*3))→ 54] 54.
-Example 3: A total of 252 matches were played, and 723 goals were scored (an average of [Calculator(723/252)→ 2.87] 2.87 per match). This is twenty goals more than the [Calculator(723-20)→703] 703 goals last year.
-Example 4: I went to Paris in 1994 and stayed there until 2011, so in total, it was [Calculator(2011-1994)→ 17] 17 years.""",
+TOOL_DOCUMENTATION = {
+    
+"Calculator": {
+    "tool_explanation":"""The calculator tool computes arithmetic expressions. You can call the API by writing "<TOOL>Calculator|expression</TOOL>" where "expression" is the expression to be computed. Here are some examples of its usage:
+Example 1: Last year we collected 237342 apples, double of what we collected this year: <TOOL>Calculator|237342/2→ 118671</TOOL> 118671.
+Example 2: The number in the next term is 18 + 12 x 3 = <TOOL>Calculator|18+(12*3)→ 54</TOOL> 54.
+Example 3: A total of 252 matches were played, and 723 goals were scored (an average of <TOOL>Calculator|723/252→ 2.87</TOOL> 2.87 per match). This is twenty goals more than the <TOOL>Calculator|723-20→703</TOOL> 703 goals last year.
+Example 4: I went to Paris in 1994 and stayed there until 2011, so in total, it was <TOOL>Calculator|2011-1994→ 17</TOOL> 17 years.""",
+    "few_shot_examples":[
+"""Question: Paris has 3 times the number of inhabitants as Madrid. Madrid has 1 million more inhabitants than Barcelona. Barcelona has 1.6 million inhabitants. How many inhabitants does Paris have?
+Let's think step by step: Madrid has 1 million more inhabitants than Barcelona so it has <TOOL>Calculator|1600000+1000000→ 2600000</TOOL> 2600000 inhabitants. Therefore, as Paris has three times Madrid's population, Paris has <TOOL>Calculator|2600000*3→ 7800000</TOOL> 7800000 inhabitants.
+Answer: 7800000""",
+    ],
+    "example_answer": "42"
+},
 
-"Calendar": """The calendar tool returns the current date. It can help you get information required to complete the text, such as the temporal context of a person, action or general information. You can call the API by writing "[Calendar( )]". Here are some examples of its usage:
-Example 1: Today is the first [Calendar( )→ Today is Friday, 01/01/2019] Friday of the year.
-Example 2: The president of the United States is [Calendar( )→ Today is Tuesday, 11/02/2007] George W. Bush.""",
+"Calendar": {
+    "tool_explanation":"""The calendar tool returns the current date. It can help you get information required to complete the text, such as the temporal context of a person, action or general information. You can call the API by writing "<TOOL>Calendar|</TOOL>". Here are some examples of its usage:
+Example 1: Today is the first <TOOL>Calendar| → Today is Friday, 01/01/2019</TOOL> Friday of the year.
+Example 2: The president of the United States is <TOOL>Calendar| → Today is Tuesday, 11/02/2007</TOOL> George W. Bush.""",
+    "few_shot_examples":[
+"""Question: How many days till the first of september?
+Let's think step by step: Today is <TOOL>Calendar| → Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator|31-21→ 10</TOOL> 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
+Answer: 11"""
+        ],
+    "example_answer": "2017"
+},
 
-"WikiSearch": """The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "[WikiSearch(term)]" where "term" is the search term you want to look up. Here are some examples of API calls:
-Example 1: The colors on the flag of Ghana have the following meanings: red is for [WikiSearch("Ghana flag red meaning")] the blood of martyrs, green for forests, and gold for mineral wealth.
-Example 2: But what are the risks during production of nanomaterials? [WikiSearch("nanomaterial production risks")] Some nanomaterials may give rise to various kinds of lung damage.
-Example 3: Metformin is the first-line drug for [WikiSearch("Metformin first-line drug")] patients with type 2 diabetes and obesity."""}
+"WikiSearch": {
+    "tool_explanation":"""The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "<TOOL>WikiSearch|term→</TOOL>" where "term" is the search term you want to look up. Here are some examples of API calls:
+Example 1: The colors on the flag of Ghana have the following meanings: red is for <TOOL>WikiSearch|Ghana flag red meaning→ The red from Ghana's flag replesents the blood of martyrs</TOOL> the blood of martyrs, green for forests, and gold for mineral wealth.
+Example 2: But what are the risks during production of nanomaterials? <TOOL>WikiSearch|nanomaterial production risks→ Evidence of lung deterioration</TOOL> Some nanomaterials may give rise to various kinds of lung damage.
+Example 3: Metformin is the first-line drug for <TOOL>WikiSearch|Metformin first-line drug→ Metformin is used by diabetic patients</TOOL> patients with type 2 diabetes and obesity.""",
+    "few_shot_examples":[
+"""Question: What year was the prime minister of England that surved during WW2 born?
+Let's think step by step: The prime minister of England that surved during WW2 was <TOOL>WikiSearch|prime minister of England during WW2→ Winston Churchill</TOOL> Winston Churchill. He was born in <TOOL>WikiSearch|Winston Churchill birth year→ 1874</TOOL> 1874.
+Answer: 1874"""
+    ],
+    "example_answer": "George Washington"
+},
+}
 
-TOOL_EXPLANATIONS = {tool_name:f"""{TOOL_DOCUMENTATION[tool_name]}
 
-It can help you solve your current task. Now, complete the text below.
+TOOL_DOCUMENTATION = {
+"Calculator": {
+    "tool_explanation":"""The calculator tool computes arithmetic expressions. You can call the API by writing "<TOOL>Calculator(expression=</TOOL>" where "expression" is the expression to be computed. Here are some examples of its usage:
+Example 1: Last year we collected 237342 apples, double of what we collected this year: <TOOL>Calculator(237342/2)→ 118671</TOOL> 118671.
+Example 2: The number in the next term is 18 + 12 x 3 = <TOOL>Calculator(18+(12*3))→ 54</TOOL> 54.
+Example 3: A total of 252 matches were played, and 723 goals were scored (an average of <TOOL>Calculator(723/252)→ 2.87</TOOL> 2.87 per match). This is twenty goals more than the <TOOL>Calculator(723-20)→703</TOOL> 703 goals last year.
+Example 4: I went to Paris in 1994 and stayed there until 2011, so in total, it was <TOOL>Calculator(2011-1994)→ 17</TOOL> 17 years.""",
+    "task_shot_examples":[
+        """Question: Mary had 23 apples. She gave 5 to John and 3 to Peter. How many apples does she have left?
+Lets think step by step: she gave away a total of 5+3=8 apples, so she has 23-8=15 apples left.
+Answer: 15"""],
+    "few_shot_examples":[
+"""Question: Paris has 3 times the number of inhabitants as Madrid. Madrid has 1 million more inhabitants than Barcelona. Barcelona has 1.6 million inhabitants. How many inhabitants does Paris have?
+Let's think step by step: Madrid has 1 million more inhabitants than Barcelona so it has <TOOL>Calculator(1600000+1000000)→ 2600000</TOOL> 2600000 inhabitants. Therefore, as Paris has three times Madrid's population, Paris has <TOOL>Calculator(2600000*3)→ 7800000</TOOL> 7800000 inhabitants.
+Answer: 7800000""",
+    ],
+    "example_answer": "42"
+},
 
-""" for tool_name in TOOL_DOCUMENTATION.keys()}
+"Calendar": {
+    "tool_explanation":"""The calendar tool returns the current date. It can help you get information required to complete the text, such as the temporal context of a person, action or general information. You can call the API by writing "<TOOL>Calendar(</TOOL>". Here are some examples of its usage:
+Example 1: Today is the first <TOOL>Calendar( )→ Today is Friday, 01/01/2019</TOOL> Friday of the year.
+Example 2: The president of the United States is <TOOL>Calendar( )→ Today is Tuesday, 11/02/2007</TOOL> George W. Bush.""",
+    "task_shot_examples":[
+        ""
+    ],
+    
+    "few_shot_examples":[
+"""Question: How many days till the first of september?
+Let's think step by step: Today is <TOOL>Calendar( )→ Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator(31-21)→ 10</TOOL> 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
+Answer: 11"""
+        ],
+    "example_answer": "2017"
+},
+
+"WikiSearch": {
+    "tool_explanation":"""The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "<TOOL>WikiSearch(term)→</TOOL>" where "term" is the search term you want to look up. Here are some examples of API calls:
+Example 1: The colors on the flag of Ghana have the following meanings: red is for <TOOL>WikiSearch(Ghana flag red meaning)→ The red from Ghana's flag replesents the blood of martyrs</TOOL> the blood of martyrs, green for forests, and gold for mineral wealth.
+Example 2: But what are the risks during production of nanomaterials? <TOOL>WikiSearch(nanomaterial production risks)→ Evidence of lung deterioration</TOOL> Some nanomaterials may give rise to various kinds of lung damage.
+Example 3: Metformin is the first-line drug for <TOOL>WikiSearch(Metformin first-line drug)→ Metformin is used by diabetic patients</TOOL> patients with type 2 diabetes and obesity.""",
+    "few_shot_examples":[
+"""Question: What year was the prime minister of England that surved during WW2 born?
+Let's think step by step: The prime minister of England that surved during WW2 was <TOOL>WikiSearch(prime minister of England during WW2)→ Winston Churchill</TOOL> Winston Churchill. He was born in <TOOL>WikiSearch(Winston Churchill birth year)→ 1874</TOOL> 1874.
+Answer: 1874"""
+    ],
+    "example_answer": "George Washington"
+},
+}
 
 
-    # Tools given to the toolmaster must have:
-    # 1. Name: str - Unique identifier for the tool
-    # 2. Arg parser: Callable - A function that takes a string and returns a list of arguments
-    # 3. Tool: Callable - A function that takes a list of argumets and returns a string
-    # 4. Explanation prompt: Union[torch.Tensor, str] - A string that explains how to use the tool
-    # 5. Short description: Optional[str] - A short description of the tool
 
-TOOL_SPECS = {"Calculator":{
-    "name": "Calculator",
-    "arg_parser": lambda x: [calc_parse(x)],
-    "tool": Calculator,
-    "explanation_prompt": TOOL_EXPLANATIONS["Calculator"],
-    "short_description": "adds, subtracts, multiplies and divides"
-}, "Calendar":{
-    "name": "Calendar", 
-    "arg_parser": lambda x: [calend_parse(x)],
-    "tool": Calendar,
-    "explanation_prompt": TOOL_EXPLANATIONS["Calendar"],
-    "short_description": "returns the current date"
-}, "WikiSearch":{
-    "name": "WikiSearch",
-    "arg_parser": lambda x: [wiki_parse(x)],
-    "tool": WikiSearch,
-    "explanation_prompt": TOOL_EXPLANATIONS["WikiSearch"],
-    "short_description": "searches Wikipedia"
-}}
+# Tools given to the toolmaster must have:
+# 1. Name: str - Unique identifier for the tool
+# 2. Arg parser: Callable - A function that takes a string and returns a list of arguments
+# 3. Tool: Callable - A function that takes a list of argumets and returns a string
+# 4. Explanation prompt: Union[torch.Tensor, str] - A string that explains how to use the tool
+# 5. Short description: Optional[str] - A short description of the tool
 
-ANSWER_TOKEN_IDS = {"GPTJ": [33706, 41484, 23998, 3280],
+MULTI_TOOL_USE_EXAMPLE = """Question: How many days till the first of september?
+Let's think step by step: Today is <TOOL>Calendar| → Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator|31-21→ 10] 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
+Answer: 11"""
+
+MULTI_TOOL_USE_EXAMPLE = """Question: How many days till the first of september?
+Let's think step by step: Today is <TOOL>Calendar( )→ Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator(31-21)→ 10] 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
+Answer: 11"""
+
+
+ANSWER_TOKEN_IDS = {"GPTJ": [33706, 41484, 23998, 3280, 24361],
                     "LLAMA": [673, 1234, 12011, 22550],}
 
 POST_ANSWER_TOKEN_IDS = {"GPTJ": [628, 198],
@@ -92,42 +175,375 @@ POST_ANSWER_TOKEN_IDS = {"GPTJ": [628, 198],
 ################################## PROMPTS ####################################
 
 
-
 FREE_GENERATION_PROMPT = {
-    
-# 1 shot with calculator explanation:
-"CALC_EXPLAN_1SHOT": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the Calculator tool:
 
-{TOOL_DOCUMENTATION["Calculator"]}
+####################    None    ################################# 0 0 0  None
+"0 0 0": "[PROMPT]\n",
 
+"0.5 wiki": """Answer the following questions that evaluate your general knowledge.
 
-You can use the following tools: [AVAILABLE TOOLS]. Now, answer the following questions. When you find the answer, write "Answer:" on a new line followed by your answer. For example, if the answer is 42, write "\\nAnswer: 42".
+Question: [PROMPT]
+""",
+"0.5 math": """Answer the following questions that assess your numerical skills.
 
-Question 1: Paris has 3 times the number of inhabitants as Madrid. Madrid has 1 million more inhabitants than Barcelona. Barcelona has 1.6 million inhabitants. How many inhabitants does Paris have?
-Let's think step by step: Madrid has 1 million more inhabitants than Barcelona so it has [Calculator(1600000+1000000)→ 2600000] 2600000 inhabitants. Therefore, as Paris has three times Madrid's population, Paris has [Calculator(2600000*3)→ 7800000] 7800000 inhabitants.
-Answer 1: 7800000
+Question: [PROMPT]
+""",
 
-Question 2: [PROMPT]
-Let's think step by step: """,
-
-# 0 shot with calculator explanation:
-"CALC_EXPLAN_0SHOT": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the Calculator tool:
-
-{TOOL_DOCUMENTATION["Calculator"]}
-
-
-You can use the following tools: [AVAILABLE TOOLS]. Now, answer the following questions. When you find the answer, write "Answer:" on a new line followed by your answer. For example, if the answer is 42, write "\\nAnswer: 42".
+################## basic_1-shot ################################# 0  0  n
+"0 0 n": 
+"""[FEW_SHOT_EXAMPLES]
 
 Question: [PROMPT]
 Let's think step by step: """,
 
-# None
-"None": None}
+################## TASK EXPLAN #################################   0 1   basic_1-shot
+"0 1": """Answer the following questions. When you find the answer, write "Answer:" on a new line followed by your answer. For example, if the answer is [ANSWER_EXAMPLE], write "Answer: [ANSWER_EXAMPLE]".
 
+[FEW_SHOT_EXAMPLES]
+
+Question: [PROMPT]
+Let's think step by step: """,
+################## TASK EXPLAN #################################   0 1   basic_1-shot
+
+"0 1 math": """Answer the following questions that asses your numerical skills.
+
+Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
+She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The answer is 15.
+
+Question: [PROMPT]
+""",
+
+"0 1 wiki":"""Answer the following questions that evaluates your general knowledge.
+
+Question: What country is the Burj Khalifa in?
+Answer: It is in Dubai, so in the answer is United Arab Emirates.
+
+Question: [PROMPT]
+""",
+
+"0 1+ math": """Answer the following questions that asses your numerical skills.
+
+Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
+She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The answer is 15.
+
+Question: Initially, I had $106 in my account. I used half of it to buy a lamp. How much do I have left?
+Half of 106 is 53, so the answer is 53.
+
+Question: [PROMPT]
+""",
+
+"0 1b math": """Answer the following questions that asses your numerical skills.
+
+Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
+Answer: 15.
+
+Question: [PROMPT]
+""",
+
+"0 1b wiki":"""Answer the following questions that evaluates your general knowledge.
+
+Question: What country is the Burj Khalifa in?
+Answer: United Arab Emirates.
+
+Question: [PROMPT]
+""",
+
+    
+############### TOOL EXPLAN, TASK EXPLAN #######################   1 1
+"1 1": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the [TOOL_NAME] tool:
+
+[TOOL_DOCUMENTATION]
+
+
+You can use the following tools: [AVAILABLE TOOLS]. Now, answer the following questions. When you find the answer, write "Answer:" on a new line followed by your answer. For example, if the answer is [ANSWER_EXAMPLE], write "Answer: [ANSWER_EXAMPLE]".
+
+[FEW_SHOT_EXAMPLES]
+
+Question: [PROMPT]
+Let's think step by step: """,
+
+"1 1 math": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the [TOOL_NAME] tool:
+
+[TOOL_DOCUMENTATION]
+
+
+Answer the following questions that assess your numerical skills.
+
+Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
+She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The answer is 15.
+
+Question: Initially, I had $106 in my account. I used half of it to buy a lamp. How much do I have left?
+Half of 106 is 53, so the answer is 53.
+
+Question: [PROMPT]
+""",
+
+"1 1 wiki": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the [TOOL_NAME] tool:
+
+[TOOL_DOCUMENTATION]
+
+
+Answer the following questions that evaluates your general knowledge.
+
+Question: How many eyes do Koalas have?
+Koalas are mammals, and mammals have 2 eyes. The answer is 2.
+
+Question: [PROMPT]
+""",
+
+"1 1b math": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the [TOOL_NAME] tool:
+
+[TOOL_DOCUMENTATION]
+
+
+Answer the following questions that assess your numerical skills.
+
+Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
+Answer: 15.
+
+Question: [PROMPT]
+""",
+
+"1 1b wiki": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the [TOOL_NAME] tool:
+
+[TOOL_DOCUMENTATION]
+
+
+Answer the following questions that evaluates your general knowledge.
+
+Question: What country is the Burj Khalifa in?
+Answer: United Arab Emirates.
+
+Question: [PROMPT]
+""",
+
+"1.5 math": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the [TOOL_NAME] tool:
+
+[TOOL_DOCUMENTATION]
+
+
+Answer the following questions that assess your numerical skills.
+
+Question: [PROMPT]
+""",
+
+"1.5 wiki": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the [TOOL_NAME] tool:
+
+[TOOL_DOCUMENTATION]
+
+
+Answer the following questions that evaluates your general knowledge.
+
+Question: [PROMPT]
+""",
+
+############ TOOL EXPLAN, ARG PROMPT #######################  1 2 TOOL_EXPLAN_SHORT
+
+"ARG_PROMPT": """[TOOL_DOCUMENTATION]
+
+It can help you solve your current task. Now, complete the text below.
+
+[PROMPT]""",
+
+
+################# AVAILABLE TOOLS BARE ##############################  2  0  0  toolmaster-finetuned-bare
+"2 0 0":"""These are the available tools: 
+[AVAILABLE TOOLS]
+
+[PROMPT]
+Answer: """,
+
+################# AVAILABLE TOOLS BARE ##############################  2  0  n   toolmaster-finetuned-few-shot
+"2 0 n":"""These are the available tools: 
+[AVAILABLE TOOLS]
+
+[FEW_SHOT_EXAMPLES]
+
+Question: [PROMPT]
+Let's think step by step: """,
+
+
+#################### AVAILABLE TOOLS, TASK  ########################  2  1   toolmaster-finetuned-task
+"2 1":"""These are the available tools:
+[AVAILABLE TOOLS]
+
+Now, answer the following questions. When you find the answer, write \"Answer:\" followed by your answer. For example, if the answer is [ANSWER_EXAMPLE], write \"Answer: [ANSWER_EXAMPLE]\".
+
+[FEW_SHOT_EXAMPLES]
+
+Question: [PROMPT]
+Let's think step by step: """,
+
+
+#################### AVAILABLE TOOLS, TASK  ########################  2  1   toolmaster-finetuned-task
+#Question: Mary had 23 apples. She gave 5 to John and 3 to Peter. How many apples does she have left?\nShe gave away a total of 5+3=8 apples, so she has 23-8=15 apples left. The answer is 15.
+#Question: Who is the guitarist of the band Queen?\nThe guitarist is Brian May. The answer is Brian May.
+"2 3 math":"""These are the available tools:
+[AVAILABLE TOOLS]
+
+Answer the following questions that assess your numerical skills.
+
+Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
+She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The answer is 15.
+
+Question: Initially, I had $106 in my account. I used half of it to buy a lamp. How much do I have left?
+Half of 106 is 53, so the answer is 53.
+
+Question: [PROMPT]
+""",
+
+"2 3 wiki":"""These are the available tools:
+[AVAILABLE TOOLS]
+
+Answer the following questions that evaluate your general knowledge.
+
+Question: How many eyes do Koalas have?
+Koalas are mammals, and mammals have 2 eyes. The answer is 2.
+
+Question: [PROMPT]
+""",
+
+"2 36 math":"""These are the available tools:
+[AVAILABLE TOOLS]
+
+Answer the following questions that assess your numerical skills.
+
+Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
+She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The answer is 15.
+
+Question: Initially, I had $106 in my account. I used half of it to buy a lamp. How much do I have left?
+Half of 106 is 53, so the answer is 53.
+
+Question: Example 1: Last year we collected 237342 apples, double of what we collected this year. How many apples did we collect this year?
+This year we collected 237342/2 = 118671, so the answer is 118671.
+
+Question: What is 18 + 12 x 3?
+The answer is 18+(12*3) = 54.
+
+Question: A total of 252 matches were played, and 723 goals were scored. What is the average goals per match?
+The average is the number of goals divided by the number of matches, so 2.87. The answer is 2.87.
+
+Question: I went to Paris in 1994 and stayed there until 2011. How many years did I live in Paris?
+In total, it was 2011-1994= 17 years. The answer is 17.
+
+Question: [PROMPT]
+""",
+
+"2 36 wiki":"""These are the available tools:
+[AVAILABLE TOOLS]
+
+Answer the following questions that evaluate your general knowledge.
+
+Question: How many eyes do Koalas have?
+Koalas are mammals, and mammals have 2 eyes. The answer is 2.
+
+Question: What does the green color on the flag of Ghana meaning?
+The green represents forests, so the answer is forests.
+
+Question: What are the risks during production of nanomaterials? 
+Some nanomaterials may give rise to various kinds of lung damage, so the answer is lung damage.
+
+Question: What patiens use Metformin?
+The answer is patients with type 2 diabetes and obesity.
+
+Question: [PROMPT]
+""",
+
+
+#################### AVAILABLE TOOLS, TASK  ########################  2  1   toolmaster-finetuned-task
+"2 3b":"""These are the available tools:
+[AVAILABLE TOOLS]
+
+The following questions are meant to asses your numerical skills. When you find an answer, write \"Answer:\" followed by your answer. For example, if the answer is [ANSWER_EXAMPLE], write \"Answer: [ANSWER_EXAMPLE]\".
+
+[FEW_SHOT_EXAMPLES]
+
+Question: [PROMPT]
+Let's think step by step: """,
+
+}
+
+relies_on_extraction = ["0 1", "1 1", "2 1"]
+
+def prepare_prompt(prompt_name, tool_name=None, few_shot_n=0):
+    global FREE_GENERATION_PROMPT, TOOL_DOCUMENTATION, TOOL_SPECS
+
+    if prompt_name not in FREE_GENERATION_PROMPT:
+        prompt_name = prompt_name[:-2]
+    prompt = FREE_GENERATION_PROMPT[prompt_name]
+    if tool_name is not None:
+        prompt = prompt.replace("[TOOL_NAME]", tool_name)
+        prompt = prompt.replace("[TOOL_DOCUMENTATION]", TOOL_DOCUMENTATION[tool_name]["tool_explanation"])
+        few_shot_examples = "\n\n".join(TOOL_DOCUMENTATION[tool_name]["few_shot_examples"][few_shot_n:])
+        if few_shot_n == 0:
+            prompt = prompt.replace("[FEW_SHOT_EXAMPLES]\n\n", "")
+        else:
+            prompt = prompt.replace("[FEW_SHOT_EXAMPLES]", few_shot_examples)
+        prompt = prompt.replace("[ANSWER_EXAMPLE]", TOOL_DOCUMENTATION[tool_name]["example_answer"])
+    else:
+        if "[TOOL_NAME]" in prompt or "[TOOL_DOCUMENTATION]" in prompt:
+            raise Exception("This prompt requires a tool name")
+    return prompt
+
+
+
+TOOL_SPECS = {
+    
+"Calculator":{
+    "name": "Calculator",
+    "arg_parser": lambda x: [calc_parse(x)],
+    "tool": Calculator,
+    "explanation_prompt": prepare_prompt("ARG_PROMPT", "Calculator"),
+    "short_description": "can compute arithmetic expressions",
+    "max_arg_length": 30,
+
+}, 
+"Calendar":{
+    "name": "Calendar", 
+    "arg_parser": lambda x: [calend_parse(x)],
+    "tool": Calendar,
+    "explanation_prompt": prepare_prompt("ARG_PROMPT", "Calendar"),
+    "short_description": "returns the current date",
+    "max_arg_length": 1,
+
+}, "WikiSearch":{
+    "name": "WikiSearch",
+    "arg_parser": lambda x: [wiki_parse(x)],
+    "tool": WikiSearch,
+    "explanation_prompt": prepare_prompt("ARG_PROMPT", "WikiSearch"),
+    "short_description": "searches Wikipedia",
+    "max_arg_length": 20,
+}, 
+}
+
+
+def get_model_path(name):
+    global BASE_MODEL_NAME
+    return os.path.join("/vol/bitbucket/jg2619/augmenting_llms/model_training/models",f"{BASE_MODEL_NAME}_" + name)
 
 TRAINED_MODELS = {
     "GPTJ-no-add-sub-0": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_goody",
-
+    "GPTJ-no-add-sub-1": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_no_add",
+    "GPTJ-no-duplicates": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_no_duplicates",
+    "GPTJ-no-duplicates-2": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_no_duplicates_2",
+    "GPTJ-no-duplicates-2-raw": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_no_duplicates_2_raw",
+    "GPTJ-OBI": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_increasing_relevance",
+    "GPTJ-OBI-raw": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_increasing_relevance_raw",
+    "GPTJ-OBI-2": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_increasing_relevance_2",
+    "GPTJ-OBI-2-raw": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_increasing_relevance_2_raw",
+    "GPTJ-OBI-shuffle": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_shuffle_DX5",
+    "GPTJ-arg-training": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_arg_training",
+    "GPTJ-arg-training-debug": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_arg_training_debug",
+    "GPTJ-full-data": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_full_data",
+    "GPTJ-full-data-fr": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_full_data_fr",
+    "GPTJ-just-gen": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_just_gen",
+    "GPTJ-mickey": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_mickey",
+    "GPTJ-small-no-calc": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_small_no_calc",
+    "GPTJ-small": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_small",
+    "GPTJ-distracted": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_distracted",
+    "GPTJ-med": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_med",
+    "GPTJ-med-arg": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_med_arg",
+    "GPTJ-large": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_large",
 }
 
 
@@ -136,17 +552,20 @@ cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolf
 MODEL_NAME = "GPTJ-bare"
 BASE_MODEL_NAME = "GPTJ" # "GPTJ" or "LLAMA"
 
-BENCHMARK_NAME = "gms8k-easy"
+BENCHMARK_NAME = "gsm8k-easy"
+
+#logging
 
 def load_GPTJ(path:str="EleutherAI/gpt-j-6B",
-              new_tokens:List[str]=["[PAD]"],):
+              new_tokens:List[str]=[],
+              **kwargs):
     # Load the GPTJ model we will use to construct the Toolmaster model
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", cache_dir=cache_dir)
 
     tokenizer.add_tokens(new_tokens)
-    tokenizer.pad_token=new_tokens[-1]
+    tokenizer.pad_token=tokenizer.eos_token if tokenizer.pad_token is None else tokenizer.pad_token
 
-    config = GPTJConfig.from_pretrained("EleutherAI/gpt-j-6B", padding_idx=tokenizer.pad_token_id)
+    # config = GPTJConfig.from_pretrained("EleutherAI/gpt-j-6B", padding_idx=tokenizer.pad_token_id)
 
     kwargs = {}
     if path == "EleutherAI/gpt-j-6B":
@@ -156,7 +575,7 @@ def load_GPTJ(path:str="EleutherAI/gpt-j-6B",
             path,
             torch_dtype=torch.float16,
             low_cpu_mem_usage=True, 
-            config=config, 
+            #config=config, 
             cache_dir=cache_dir, **kwargs).cuda()
 
     model.eval()
@@ -165,11 +584,11 @@ def load_GPTJ(path:str="EleutherAI/gpt-j-6B",
     return model, tokenizer
 
 def load_LLAMA(path:str="meta-llama/Llama-2-7b-hf",
-              new_tokens:List[str]=["[PAD]"],):
+              new_tokens:List[str]=[],):
         
         kwargs = {cache_dir: cache_dir}
         if path == "meta-llama/Llama-2-7b-hf":
-            kwargs = {"token":"***REMOVED***",}
+            kwargs["token"] = "***REMOVED***"
 
         tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf",
                                                    **kwargs)
@@ -177,7 +596,7 @@ def load_LLAMA(path:str="meta-llama/Llama-2-7b-hf",
         tokenizer.add_bos_token = False
 
         tokenizer.add_tokens(new_tokens)
-        tokenizer.pad_token=new_tokens[-1]
+        tokenizer.pad_token=tokenizer.eos_token if tokenizer.pad_token is None else tokenizer.pad_token
         
         config = LlamaConfig.from_pretrained("meta-llama/Llama-2-7b-hf", 
                                              padding_idx=tokenizer.pad_token_id,
@@ -205,37 +624,62 @@ def create_toolformer(
     assert "free_generation_prompt" in config
 
 
-    # Provide defaults for max_new_tokens (40), 
-    max_new_tokens = config.get("max_new_tokens", 40)
-
-    output_dir = config.get("output_dir", ".")
-
+    output_dir = config.pop("output_dir", ".")
     log_dir = output_dir + "/logs"
 
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
+    if "substitute_explan_tokens" in config:
+        config["free_generation_prompt"] = config["free_generation_prompt"].replace("<TOOL>", config["substitute_explan_tokens"][0])
+        config["free_generation_prompt"] = config["free_generation_prompt"].replace("</TOOL>", config["substitute_explan_tokens"][1])
+
+
     tool_specs = []
-    for tool in config["tools"]:
-        tool_specs.append(TOOL_SPECS[tool])
+    for tool in config.pop("tools"):
+        spec = TOOL_SPECS[tool]
+        if "override_tool_explan" in config:
+            spec["explanation_prompt"] = config["override_tool_explan"][tool]
+        if "substitute_explan_tokens" in config:
+            spec["explanation_prompt"] = spec["explanation_prompt"].replace("<TOOL>", config["substitute_explan_tokens"][0])
+            spec["explanation_prompt"] = spec["explanation_prompt"].replace("</TOOL>", config["substitute_explan_tokens"][1])
+
+
+        tool_specs.append(spec)
     
-    tool_token_ids = config.get("tool_token_ids", [])
-    tool_tokens = config.get("tool_tokens", "[")
+    tool_token_ids = config.pop("tool_token_ids", [])
+    tool_tokens = config.pop("tool_tokens", "[")
     if tool_token_ids == []:
         for key, value in config["tokenizer"].get_vocab().items():
             if any(token in key for token in tool_tokens):
                 tool_token_ids.append(value)
+
+    assert len(tool_tokens) > 0, "No tool tokens found in tokenizer vocab"
+    LOGGER.warn(f"Tool tokens: {tool_tokens}")
+
     
-    return ToolMaster(model = config["model"],
-                      tokenizer = config["tokenizer"],
-                      tool_specs = tool_specs,
+
+    # Recurse dictionary recursively and print values if they are str, float ot int:
+    def print_dict(d, indent=0):
+        for key, value in d.items():
+            if isinstance(value, dict):
+                LOGGER.warn('  ' * indent + str(key))
+                print_dict(value, indent+4)
+            elif isinstance(value, (str, float, int)):
+                LOGGER.warn('  ' * indent + str(key) + ": " + str(value))
+                
+    print_dict(config)
+    print("Tool tokens:", tool_tokens)
+    print("Tool token ids:", tool_token_ids)
+    print("Tool specs:", tool_specs)
+    
+    return ToolMaster(tool_specs = tool_specs,
                       tool_token_ids = tool_token_ids,
-                      max_new_tokens = max_new_tokens,
-                      free_generation_prompt = config["free_generation_prompt"],
                       log_dir=log_dir,
                       catch_answers=True,
                       answer_token_ids=ANSWER_TOKEN_IDS[BASE_MODEL_NAME],
                       post_answer_token_ids=POST_ANSWER_TOKEN_IDS[BASE_MODEL_NAME],
+                      **config
                       )
 
 @beartype
@@ -244,13 +688,14 @@ def create_config(
             model_path: str = "EleutherAI/gpt-j-6B",
             max_new_tokens: int = 40,
             free_gen_prompt_name: str = "CALC_EXPLAN_1SHOT",
-            tools: list[str] = ["Calculator"],):
+            tools: list[str] = ["Calculator"],
+            **kwargs,):
     global MODEL_NAME, FREE_GENERATION_PROMPT
 
     MODEL_NAME = "GPTJ-bare"
 
     if base_model_name == "GPTJ":
-        model, tokenizer = load_GPTJ(model_path) 
+        model, tokenizer = load_GPTJ(model_path, **kwargs) 
     else:
         model, tokenizer = load_LLAMA(model_path)
         max_new_tokens = int(1.2*max_new_tokens)
@@ -259,27 +704,27 @@ def create_config(
         "model": model,
         "tokenizer": tokenizer,
         "tools": tools,
-        "free_generation_prompt": FREE_GENERATION_PROMPT[free_gen_prompt_name],
+        "free_generation_prompt": prepare_prompt(free_gen_prompt_name, tools[0]),
         "max_new_tokens": max_new_tokens,
-    }
+    } | kwargs
  
     return config
 
 
 
 # Function that loads and returns the GMS8K dataset
-def load_gms8k_easy():
+def load_gsm8k_easy():
     with open("ToolQA/data/questions/easy/gsm8k-easy.jsonl", "r") as f:
         data = [json.loads(line) for line in f.readlines()]
     return data
 
-def load_gms8k_hard():
+def load_gsm8k_hard():
     with open("ToolQA/data/questions/hard/gsm8k-hard.jsonl", "r") as f:
         data = [json.loads(line) for line in f.readlines()]
     return data
 
 
-def load_ASDiv():
+def load_ASDiv(subset = True):
 
     from bs4 import BeautifulSoup
     import re
@@ -294,21 +739,48 @@ def load_ASDiv():
         for line in f.readlines():
             problem_ids.append(line.strip())
 
+    if not subset: problem_ids = [f"nluds-{id:04d}" for id in range(1,2306)]
     data = []
 
     for id in problem_ids:
         problem = Bs_data.find("problem", id=id)
+        # Remove units, provided as " (unit)"
+        answer = re.sub(' \(.+\)', '', problem.answer.text)
+
         question = str(problem.find(string=True, recursive=False)[3:-3] + " " + problem.question.text)
-        answer = re.sub('[^0-9.]', '', problem.answer.text)
 
         data.append({"question":question, "answer":answer})
 
     return data
 
 def load_triviaQA():
-    with open('/vol/bitbucket/jg2619/augmenting_llms/benchmarks/TriviaQA/triviaqa-unfiltered/short-unfiltered-web-dev.json') as f:
+    with open('/vol/bitbucket/jg2619/augmenting_llms/benchmarks/TriviaQA/triviaqa-unfiltered/short-unfiltered-web-dev-types.json') as f:
         data = json.load(f)["Data"]
+        # Get a random sample of 300 examples, with a fixed seed:
+        # data = random.Random(42).sample(data, 900)
+        data = [d for d in data if d["answer_type"] == "WikipediaEntity"]
     return data
+
+
+#def load_ccnet_for_pp():
+#val_dataset = load_dataset("/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/unprocessed/segment_ccnet_unprocessed", data_files=["1000_examples_not_in_training.csv"], split="train")
+#val_dataset = val_dataset.map(tokenize_function, batched=True, remove_columns=val_dataset.column_names)
+
+
+def perplexity(dataset):
+    # Dataset is a tuple of predictions and labels
+
+    average_perplexity = 0
+    examples = 0
+
+    for pred, lab in zip(dataset):
+        examples += 1
+        loss_fct = torch.nn.functional.cross_entropy(pred.reshape(-1, pred.shape[-1]), lab.view(-1), reduction='sum')
+
+        average_perplexity += torch.exp(loss_fct)
+
+    average_perplexity /= examples
+    return {"perplexity": average_perplexity}
 
 
 @beartype
@@ -390,8 +862,10 @@ def evaluate(
 
 def prompt_model(model,
                  questions:List[str],
-                 batch_size:int = 10,):
+                 batch_size:int = None,):
     
+    LOGGER.info("Prompting model.....................................")
+
     total_time = 0
 
     model_outputs = []
@@ -402,16 +876,24 @@ def prompt_model(model,
             start_time = time.time()
             model_outputs += model(pending[:batch_size])
         except torch.cuda.OutOfMemoryError as e:             # type: ignore
-            print("Out of memory error")
-            print(f"Reducing batch size from {batch_size} to {batch_size-5}")
+            LOGGER.info(f"Out of memory error. Reducing batch size from {batch_size} to {batch_size-5}")
             batch_size -= 5
             continue
+        except Exception as e:
+            print("Exception.... should stop")
+            TOOLMASTER_LOGGER.exception(e)
+            LOGGER.exception(e)
+            raise e
 
         total_time += time.time() - start_time
         pending = pending[batch_size:]
-
+        
     responses = [output["response"] for output in model_outputs]
     tool_histories = [output["tool_history"] for output in model_outputs]
+
+    # print
+    for out in model_outputs:
+        LOGGER.info(out)
 
     return responses, tool_histories, total_time
 
@@ -420,16 +902,18 @@ def prompt_model(model,
 def write_results(
     experiment_data:Union[Dict[List],List[Dict[str, Any]]],
     total_time=None,
+    benchmark_name:str = BENCHMARK_NAME,
+    model_name:str = MODEL_NAME,
 ):
     # count csv files in directory
-    file_count = len([name for name in os.listdir('.') if name.endswith(".csv")])
+    file_count = len([name for name in os.listdir('./results') if name.endswith(".csv") and model_name in name and benchmark_name in name])
 
     if isinstance(experiment_data, dict):
         # Transform dict to list of dicts:
         experiment_data = [dict(zip(experiment_data,t)) for t in zip(*experiment_data.values())]
 
-    with open(f"{BENCHMARK_NAME}-responses-{MODEL_NAME}_{file_count}.csv", "w") as f:
-        print(f"Writing responses to {BENCHMARK_NAME}-responses-{MODEL_NAME}_{file_count}.csv")
+    with open(f"results/{benchmark_name}-responses-{model_name}_{file_count}.csv", "w") as f:
+        LOGGER.info(f"Writing responses to {benchmark_name}-responses-{model_name}_{file_count}.csv")
         
         # Standard writer:
         writer = csv.DictWriter(f, fieldnames=list(experiment_data[0].keys()))
@@ -437,10 +921,10 @@ def write_results(
         for row in experiment_data:
             writer.writerow(row)
             for key, value in row.items():
-                print(f"{key}: {value}")
-            print()
+                LOGGER.debug(f"{key}: {value}")
+            LOGGER.debug("")
 
-    with open(f"{BENCHMARK_NAME}-responses-{MODEL_NAME}_{file_count}.txt", "w") as f:
+    with open(f"results/{benchmark_name}-responses-{model_name}_{file_count}.txt", "w") as f:
         # Write current date of experiment:
         f.write(f"Date: {datetime.datetime.now()}\n")
         if total_time is not None:
@@ -448,62 +932,176 @@ def write_results(
             f.write(f"Time taken: {total_time}\n")
 
 
+            
+#LOGGER.info("Extracting model answers.....................................")
 @beartype
-def extract_model_answers(
-        responses: list[str],
-):
-    # This function extracts the answers from the data. It assumes the model has correctly generated a sentence with "Answer(<response>)". We will extract the response from the sentence and return it.
-    model_answers = []
-    for i, response in enumerate(responses):
-        # Check that the model has generated a sentence with "Answer(<response>)"
-        if "Answer" not in response:
-            print("The model has not generated a sentence with 'Answer'")
-            print(f"Response {i}: {response}")
-            model_answers.append("")
-            continue
-        
-        # Extract the text after the first reference to Answer:
-        response = response.split("Answer")[1]
+def extract_answer(
+        response: str,
+) -> str:
+    response = response.replace("Answer 2:", "Answer:")
+    response = response.replace("Answer 1:", "Answer:")
+    response = response.replace("Answer 3:", "Answer:")
+    response = response.replace("Answer 4:", "Answer:")
+    response = response.replace("Answer 5:", "Answer:")
+    # Check that the model has generated a sentence with "Answer(<response>)"
+    # Check with re if "answer " or "answer:" is in low_responses:
+    if re.search(r"answer", response, flags=re.IGNORECASE) is None:
+        #LOGGER.info(f"The model has not generated a sentence with 'Answer'  .......  {'FAIL':>10}   ||  Processed total: {(i+1)*100/len(responses):0.1f}%,  Correct extraction: {correctly_extracted_count/(i+1)}")#logging.info
+        return response
+    response = re.split(r"answer:?", response, flags=re.IGNORECASE)
 
-        # Remove trailing full stop:
-        response = response.strip(".")
+    # Add all parts of the response after "Answer" to the answer:
+    response = "answer".join(response[1:])
 
-        #response = response.split(")")[0]
-        model_answers.append(response.strip())
-    
-    return model_answers
+    return response
 
-def first_number_in_answer(answers:list[str]):
+
+dot_decimal_not = r'^\.(\d+)'
+replacement = r'0.\1'
+#LOGGER.info("Extracting first number in answer.....................................")
+def first_number(answer:str, equals:bool = True) -> str:
     # We want to extract the first number in each answer:
     # Warn if there is an equal sign in the answer or more than one number
-    first_numbers = []
-    for answer in answers:
-        try:
-            numbers = re.findall(r'-?\d+(\.\d+)?', answer)
-            if len(numbers) > 1:
-                print(f"Warning: More than one number in answer: {answer}")
-            first_number = numbers[0]
-            # Equal sign in answer:
-            if "=" in answer:
-                print(f"Warning: Equal sign in answer: {answer}")
-        except:
-            first_number = ""
-        first_numbers.append(first_number)
+    try:
+        numbers = re.findall(r'[-+]?[0-9]*\.?[0-9]+', answer)
+        if len(numbers) > 1:
+            pass
+            #LOGGER.debug(f"Warning: More than one number in answer: {answer}")
+        first_number = numbers[0]
 
-    return first_numbers
+        first_number = re.sub(dot_decimal_not, replacement, first_number)
+        # Equal sign in answer:
+        if equals and "=" in answer:
+            new_answer = answer.split("=")[1]
+            # LOGGER.warn(f"Warning: Equal sign in answer: {answer}")
+            # Get first number after equal sign:
+            try:
+                new_first_number = re.match(r'[-+]?[0-9]*\.?[0-9]+', new_answer)[0]
+                return new_first_number
+            except:
+                LOGGER.warn(f"Warning: No number after equal sign: {answer}")
+                print(f"Warning: No number after equal sign: {answer}")
+
+        return first_number
+    except Exception as e:
+        return ""
+    
+def remove_tool_calls(answer:str, tool_name:str=None, start_token:str="<TOOL>", end_token:str="→"):
+    if tool_name is not None:
+        tool_use_pattern = rf" {re.escape(start_token)}(?={tool_name}).*?{re.escape(end_token)}"
+    else:
+        tool_use_pattern = rf" {re.escape(start_token)}.*?{re.escape(end_token)}"
+    # We want to extract the first number in each answer:
+    # Warn if there is an equal sign in the answer or more than one number
+    answer = re.sub(tool_use_pattern, "", answer)
+    return answer
+
+def trivia_qa_accuracy(
+        model_answers:List[str],
+        solutions:List[List[str]],
+):
+    correct_includes = 0
+
+    for correct, model_ans in zip(solutions, model_answers):
+        # Get first 20 words of model_ans:
+        model_ans = " ".join(model_ans.split()[:20])
+        incl_done = False
+        for c in correct:
+            if not incl_done and str(c) in str(model_ans):
+                correct_includes += 1
+                incl_done = True
+
+    return correct_includes/len(solutions)
+
+def eval_asdiv(
+        responses:List[str],
+        solutions:List[str],
+):
+    results = []
+    correct_count = 0
+    for resp, sol in zip(responses, solutions, strict=True):
+        sol = sol.strip()
+        try:
+            sol = float(sol)
+            # sol is a number so we get first number in response:
+            resp = first_number(resp)
+            if resp == "":
+                results.append(False)
+            elif str(float(resp)) == str(sol):
+                correct_count += 1
+                results.append(True)
+            else:
+                results.append(False)
+        except:
+            # sol is not a number. It can be either a "yes" or the name of a person, or a time
+
+            # Check if sol is in first 20 words of response:
+            resp = " ".join(resp.split()[:20])
+            if str(sol) in resp:
+                correct_count += 1
+                results.append(True)
+            else:
+                results.append(False)
+
+    return correct_count/len(solutions), results
+
+
+def exact_acc(
+        list_a:List,
+        list_b:List,
+        convert:Callable=str,
+):
+    count = 0
+    for a, b in zip(list_a, list_b, strict=True):
+        try:
+            if convert(a) == convert(b):
+                count += 1
+        except ValueError:
+            pass
+        
+    
+    return count/len(list_a)
+
+def incl_acc(
+        list_a:List,
+        list_b:List,
+        convert:Callable=str,
+        det: bool=False
+):
+    count = 0
+    result = []
+    for a, b in zip(list_a, list_b, strict=True):
+        try:
+            if convert(a) in convert(b):
+                count += 1
+                result.append(True)
+            else:
+                result.append(False)
+        except ValueError:
+            result.append(False)
+            pass
+
+    if det:
+        return count/len(list_a), result
+
+    return count/len(list_a)
+
 
 def stats(
-        model_answers:List[str],
-        correct_answers:List[str],
+        question_result:List[bool],
         tool_history:List[List[int]],
         answer_type:str=""
 ):
     
-    print("Calculating stats...")
-    TOOL_STATUS = ["", " correctly", " incorrectly"]
-    REALMS = ["global", "exact", "includes"]
+    LOGGER.info("Calculating stats.....................................")
+    TOOL_STATUS = ["", " good call", " bad call"]
+    REALMS = ["global", "correct", "incorrect"]
 
-    examples_in_realm_count = {f"{realm}":0 for realm in REALMS}
+    examples_in_realm_count = {
+        "global":len(question_result),
+        "correct":question_result.count(True),
+        "incorrect":question_result.count(False),
+    }
 
     seen_tools = []
 
@@ -535,65 +1133,57 @@ def stats(
 
     # Tool use stats:
     # Will add same stats per tool, in dictionary with key as tool id
-    default_tool_use_count = {f"total {realm}" + tool_status:0 for realm in REALMS for tool_status in TOOL_STATUS}
+    default_call_count = {f"total {realm}" + tool_status:0 for realm in REALMS for tool_status in TOOL_STATUS}
 
-    tool_use_count = deepcopy(default_tool_use_count)
+    call_count = deepcopy(default_call_count)
     
 
     def compute_stats(tool_status, history_list, realm):
-        nonlocal stats, tool_use_count
-        print(f"Realm: {realm}, tool status: {tool_status}")
-        print(f"STATS AT START: {stats}")
+        nonlocal stats, call_count
 
-        tool_use_count[f"total {realm}" + tool_status] += len(history_list)
+        call_count[f"total {realm}" + tool_status] += len(history_list)
         stats[realm]["max number of tools used" + tool_status] = max(stats[realm]["max number of tools used" + tool_status], len(history_list))
         stats[realm]["min number of tools used" + tool_status] = min(stats[realm]["min number of tools used" + tool_status], len(history_list))
         for id in history_list:
-            tool_use_count[id][f"total {realm}" + tool_status] += 1
+            call_count[id][f"total {realm}" + tool_status] += 1
             stats[realm]["per tool stats"][id]["max number of tools used" + tool_status] = max(stats[realm]["per tool stats"][id]["max number of tools used" + tool_status], history_list.count(id))
             stats[realm]["per tool stats"][id]["min number of tools used" + tool_status] = min(stats[realm]["per tool stats"][id]["min number of tools used" + tool_status], history_list.count(id))
 
-        print(f"STATS AT END: {stats}")
+    for i, (t_history, result) in enumerate(zip(tool_history, question_result, strict=True)):
 
-    for i in range(len(model_answers)):
-        print(f"Correct answer: {correct_answers[i]}")
-        print(f"Response: {model_answers[i]}")
+        call_list = []
+        good_call_list = []
+        bad_call_list = []
+        
+        for use in t_history:
+            call_list.append(use["id"])
+            if "status" not in use:
+                LOGGER.warn(f"WARNING: No status for tool {use}")
+                LOGGER.warn(f"data is id: {i}")
+                bad_call_list.append(use["id"])
+            elif use["status"] != 0:
+                bad_call_list.append(use["id"])
+            elif use["status"] == 0:
+                good_call_list.append(use["id"])
 
-        use_list = [use["id"] for use in tool_history[i]]
-        correct_use_list = [use["id"] for use in tool_history[i] if use["status"] == 0]
-        incorrect_use_list = [use["id"] for use in tool_history[i] if use["status"] != 0]
-
-        use_cases = [use_list, correct_use_list, incorrect_use_list]
+        use_cases = [call_list, good_call_list, bad_call_list]
 
         for tool_status, use_case in zip(TOOL_STATUS, use_cases):
 
             # Initialize per tool stats for new tools:
             for id in use_case:
-                if id not in tool_use_count:
+                if id not in call_count:
                     seen_tools.append(id)
-                    tool_use_count[id] = deepcopy(default_tool_use_count)
+                    call_count[id] = deepcopy(default_call_count)
                     for realm in REALMS:
                         stats[realm]["per tool stats"][id] = deepcopy(tool_stats)
 
-            # Tool use stats:
             if tool_status == TOOL_STATUS[0]:
                 examples_in_realm_count[REALMS[0]] += 1
             compute_stats(tool_status, use_case, REALMS[0])
 
-            if str(correct_answers[i]) == model_answers[i]:
-                realm = "exact"
-                print("EXACT MAtch Correct!")
-            elif str(correct_answers[i]) in model_answers[i] and len(str(correct_answers[i]).strip()) > 0:
-                realm = "includes"
-                print("Include Correct!")
-            else:
-                print("Incorrect answer")
-                continue
-                ## EXACT REALM
+            realm = "correct" if result else "incorrect"
 
-            # Tool use stats:
-            if tool_status == TOOL_STATUS[0]:
-                examples_in_realm_count[realm] += 1
             compute_stats(tool_status, use_case, realm)
                 
 
@@ -611,18 +1201,19 @@ def stats(
                 stats[realm]["per tool stats"][id][f"total examples" + tool_status] = examples_in_realm_count[realm]
 
     # Accuracies:
-    stats[REALMS[0]]["exact accuracy"] = examples_in_realm_count[REALMS[0]]/max(examples_in_realm_count["exact"], 1)
-    stats[REALMS[0]]["includes accuracy"] = examples_in_realm_count[REALMS[0]]/max(examples_in_realm_count["includes"], 1)
+    stats[REALMS[0]]["exact accuracy"] = examples_in_realm_count["exact"]/examples_in_realm_count[REALMS[0]]
+    stats[REALMS[0]]["includes accuracy"] = examples_in_realm_count["includes"]/examples_in_realm_count[REALMS[0]]
     
     # Tree search through dictionary and print key branch and final leaf values:
     def print_dict(d, indent=0):
         for key, value in d.items():
             if isinstance(value, dict):
-                print('  ' * indent + str(key))
+                LOGGER.info('  ' * indent + str(key))
                 print_dict(value, indent+1)
             else:
-                print('  ' * indent + str(key) + ": " + str(value))
+                LOGGER.info('  ' * indent + str(key) + ": " + str(value))
 
+    LOGGER.info(f"Stats for {answer_type}:")
     print_dict(stats)
     # Save stats to json file:
     # Count number of json files to give it an id:
@@ -634,7 +1225,7 @@ def stats(
         answer_type = "_" + answer_type
     with open(f"stats/stat_{file_id}"+answer_type+".json", "w") as f:
         json.dump(stats, f, indent=4)
-    print(f"Stats saved to stats/stat_{file_id}"+answer_type+".json")
+    LOGGER.info(f"Stats saved to stats/stat_{file_id}"+answer_type+".json")
 
     return stats
 
@@ -644,24 +1235,29 @@ def experiment(base_model: str,
                model_path:str=None,
                questions:List=None,
                tools: List[str]=["Calculator"],
-               batch_size:int = 26,
+               batch_size:int = 76,
+               exp_ascii:str = "Starting experiment...",
                **kwargs):
+    global TOOLMASTER_LOGGER
 
     config_args = {
         "base_model_name":base_model,
-        "path":model_path,
+        "model_path":model_path,
         "tools":tools,
     } | kwargs
 
     if model_path is None:
-        del config_args["path"]
+        del config_args["model_path"]
     config = create_config(**config_args)
 
-    print(f"Config:")
+    LOGGER.info(f"Config:")
     for key, value in config.items():
-        print(f"{key}: {value}")
-    print()
+        LOGGER.info(f"{key}: {value}")
+    LOGGER.info("")
     toolmaster = create_toolformer(config)
+
+    TOOLMASTER_LOGGER = logging.getLogger("Toolmaster")
+    TOOLMASTER_LOGGER.warn(exp_ascii)
 
     if questions is None:
         return toolmaster
@@ -670,87 +1266,773 @@ def experiment(base_model: str,
 
 
 if __name__ == "__main__":
-    dataset_names = sys.argv[1].split(", ")
-    experiment_names = sys.argv[2:]
+    arg1 = sys.argv[1].replace(",_", ", ")
+    arg2 = sys.argv[2].replace(",_", ", ")
+
+    dataset_names = arg1.split(", ")
+    experiment_names = arg2.split(", ")
+    print(experiment_names)
+    print(sys.argv[2])
+    print(sys.argv)
+    if len(sys.argv) > 2:
+        project_description = sys.argv[3]
+    else:
+        project_description = "default"
+        
+    FILE_HANDLER = logging.FileHandler(f"{eval_logs_dir}/{project_description}.log")
+    FILE_HANDLER.setLevel(logging.INFO)
+    FILE_HANDLER.setFormatter(formatter)
+
+    DEBUG_HANDLER = logging.FileHandler(f"{eval_logs_debug_dir}/{project_description}.log")
+    DEBUG_HANDLER.setLevel(logging.DEBUG)
+    DEBUG_HANDLER.setFormatter(formatter)
+
+    LOGGER.addHandler(STREAM_HANDLER)
+    LOGGER.addHandler(FILE_HANDLER)
+    LOGGER.addHandler(DEBUG_HANDLER)
 
     datasets = []
     # LOAD DATA:
     for dname in dataset_names:
         match dname.lower():
-            case "gms8k-easy":
-                data = {"data":load_gms8k_easy(),
+            case "gsm8k-easy":
+                data = {"data":load_gsm8k_easy(),
                         "type":"math"}
-            case "gms8k-hard":
-                data = {"data":load_gms8k_hard(),
+            case "gsm8k-hard":
+                data = {"data":load_gsm8k_hard(),
                         "type":"math"}
             case "asdiv":
                 data = {"data":load_ASDiv(),
-                        "type":"math"}
+                        "type":"math",
+                        "config_kwargs":{"debug_level": 1}}
+            case "asdiv-full":
+                data = {"data":load_ASDiv(False),
+                        "type":"math",
+                        "config_kwargs":{"debug_level": 1}}
             case "triviaqa":
                 data = {"data":load_triviaQA(),
-                        "type":"wiki"}
+                        "type":"wiki",}
+            case "triviaqa-small":
+                data = {"data":load_triviaQA()[:500],
+                        "type":"wiki",}
             case "test":
                 data = {"data":load_ASDiv()[:6],
-                        "type":"math"}
+                        "type":"math",
+                        "config_kwargs":{"max_new_tokens": 40,
+                                         "debug_level": 2}}
             case _:
-                raise ValueError(f"Dataset name {dname} not recognised")
+                raise ValueError(f"Dataset name {dname.lower()} not recognised")
             
         data["name"] = dname
         datasets.append(data)
 
     for name in experiment_names:
-
         for dataset in datasets:
-            print(f"Running {name} experiment on dataset {dataset['name']}")
 
+            exp_ascii = f"""
+###########################################################################\n
+    * Running {name} experiment on dataset {dataset['name']} *  
+
+    * Experiment id: {project_description} *\n
+###########################################################################\n\n"""
+
+            
+
+            LOGGER.info(exp_ascii)
+
+            
             ex_config = {
-                "max_new_tokens": 100,
+                "max_new_tokens": 40,
+                "experiment_name": project_description,
             }
+            extract_answers = False
 
             # Can be overriden by experiments:
             if dataset["type"] == "math":
                 ex_config["tools"] = ["Calculator"]
             if dataset["type"] == "wiki":
-                ex_config["tools"]["WikiSearch"]
+                ex_config["tools"] = ["WikiSearch"]
+            
+            ex_config = ex_config | dataset.get("config_kwargs", {})
 
-            match name.upper():
-                case "AY":
-                    ex_config["base_model"] = "GPTJ"
-                case "DX":
-                    ex_config["base_model"] = "GPTJ"
-                    ex_config["model_path"] = TRAINED_MODELS["GPTJ-no-add-sub-0"]
-                case _:
-                    raise ValueError(f"Experiment name {name} not recognised")
+            if name.startswith("custom"):
+                # Model path - tokentype - tool explan mode - task explan mode - few shot n
+                config = name.split("_")
+                new_configs = []
+                for i, c in enumerate(config):
+                    if c.startswith("["):
+                        c.strip("[]")
+                        c = c.split(",")
+                        for ci in c:
+                            new_configs.append("_".join(config[:i] + [ci] + config[i+1:]))
+                        break
+                if len(new_configs) > 0:
+                    experiment_names.append(new_configs)
+                    continue
+                    
                 
+                model_path = config[1]
+                tool_explan_mode = config[2] if len(config) > 2 else 0
+                task_explan_mode = config[3] if len(config) > 3 else 0
+                few_shot_n = int(config[4]) if len(config) > 4 else 0
+                tokentype = config[5] if len(config) > 5 else 1
+
+                ex_config["base_model"] = "GPTJ"
+                try:
+                    ex_config["model_path"] = TRAINED_MODELS[model_path]
+                except KeyError:
+                    ex_config["model_path"] = get_model_path(model_path)
+                if tokentype == 1:
+                    ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                    ex_config["tool_tokens"] = [" <TOOL>"]
+                    ex_config["end_tool_token"] = "</TOOL>"
+                    if tool_explan_mode != 1:
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+
+                ex_config["free_gen_prompt_name"] = f"{tool_explan_mode} {task_explan_mode} {few_shot_n}"
+
+                if tool_explan_mode == 2:
+                    ex_config["pretty_tools"] = True
+
+                if tool_explan_mode == 1 or few_shot_n > 0:
+                    catch_answers = True
+               
+            else:
+                match name:
+                    case "AY":
+                        ex_config["base_model"] = "GPTJ"
+                    case "DX":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-no-add-sub-0"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0"   # "toolmaster-finetuned"
+                    case "DX-2":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-no-add-sub-1"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0"   # "toolmaster-finetuned"
+                    case "DX-3":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-no-duplicates"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0"   # "toolmaster-finetuned"
+                        ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                    case "DX-4":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-no-duplicates-2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0"   # "toolmaster-finetuned"
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                    case "DX-4-AY":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-no-duplicates-2-raw"]
+                    case "DX-5":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-OBI"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "toolmaster-finetuned"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                    case "DX-5-bare":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-OBI"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                    case "DX-5-AY":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-OBI-raw"]
+
+                    case "DZ-5.2-bare":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-OBI-2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                    case "DZ-5.2-COT":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-OBI-2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 1"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = True
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "DZ-5.2-COT-Shuffle-wiki":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-OBI-shuffle"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 1"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = True
+                        ex_config["tools"] = ["WikiSearch"]
+                    case "arg_training-task":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-arg-training"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 1"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        catch_answers = True
+                    case "arg_training-bare":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-arg-training"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "0 1"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                    case "arg_training-debug":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-arg-training-debug"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "0 1"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                    case "full-data":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-full-data"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "0 1"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                    case "full-data-fr":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-full-data-fr"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "0 1"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                    case "just-gen":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-just-gen"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 1
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "just-gen-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-just-gen"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 1
+                    case "mickey":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-mickey"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                    case "mickey-task":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-mickey"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 1
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "mickey-task-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-mickey"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 1
+                    case "small-task-no-calc":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small-no-calc"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "small-task-no-calc-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small-no-calc"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                    case "small-task":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "small-task-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                    case "med":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 15
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 15
+                    case "med6":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 36 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 15
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med6-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 36 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 15
+                    case "med-low-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 5
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-lowlow-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 2
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-arg":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-arg"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-arg6":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-arg"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 36 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-arg6-low-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-arg"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 36 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 3
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-arg6-high-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-arg"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 36 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 3
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "large":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-large"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "large-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-large"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                    case "large-low-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-large"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 3
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "large-high-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-large"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        catch_answers = False
+                        ex_config["tool_top_k"] = 30
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+
+
+
+
+
+                    case "GPTJ_baseline_0.5":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["disable_tools"] = True
+                        ex_config["free_gen_prompt_name"] = "0.5 spec"
+                        catch_answers = False
+                    case "GPTJ_Master_1.5":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["free_gen_prompt_name"] = "1.5 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+
+                    case "GPTJ_baselineb":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["disable_tools"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1b spec"
+                        catch_answers = False
+                    case "GPTJ_Masterb":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["free_gen_prompt_name"] = "1 1b spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+
+                    case "GPTJ_baseline":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["disable_tools"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1 spec"
+                    case "GPTJ_baseline+":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["disable_tools"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1+ spec"
+                    case "GPTJ_Master":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["free_gen_prompt_name"] = "1 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        
+                    case _:
+                        raise ValueError(f"Experiment name {name} not recognised")
+
+
+
+                if "spec" in ex_config["free_gen_prompt_name"]:
+                    ex_config["free_gen_prompt_name"] = ex_config["free_gen_prompt_name"].replace("spec", dataset["type"])
+
+
+            # TODO BASELINE GPTJ
+            # TriviaQA
+            # SVAMP
+            # Wiki experiments
+
             #print(data)
             questions = [d["question"] for d in dataset["data"]]
 
+            # Print ex config in pretty format:
+            print(f"EXPERIMENT CONFIGURATION:\n{json.dumps(ex_config, indent=4)}")
+
             responses, tool_histories, total_time = experiment(
                 questions=questions,
+                exp_ascii=exp_ascii,
                 **ex_config)
-            
-            model_answers = extract_model_answers(responses)
+
+
+            ######################### EVALUATION #########################
+
+            metrics_to_report = []
+
+            remove_calls_arr = partial(remove_tool_calls, start_token=ex_config.get("substitute_explan_tokens",["<TOOL>"])[0], end_token="→")
+            remove_calls_end = partial(remove_tool_calls, start_token=ex_config.get("substitute_explan_tokens",["<TOOL>"])[0], end_token=ex_config.get("substitute_explan_tokens",["","</TOOL>"])[1])
+            extracted_answers = list(map(extract_answer, responses))
+            call_less_arr_responses = list(map(remove_calls_arr, responses))
+            call_less_end_responses = list(map(remove_calls_end, responses))
+            extracted_cla_responses = list(map(extract_answer, call_less_arr_responses))
+            extracted_cle_responses = list(map(extract_answer, call_less_end_responses))
 
             correct_answers = [d["answer"] for d in dataset["data"]]
-            ex_results = {"questions":questions,"correct_answers":correct_answers,"responses":responses, "model_answers":model_answers}
+
+            ex_results = {"questions":questions,"correct_answers":correct_answers,"responses":responses, "extracted":extracted_answers, "tool_histories":tool_histories}
+
+            generous_acc, result = incl_acc(correct_answers, responses, det = True)
+            metrics_to_report.append(f"Generous accuracy: {generous_acc}")
 
             if dataset["type"] == "math":
-                ex_results["first_numbers"] = first_number_in_answer(model_answers)
+                first_numbers_arr = list(map(first_number, call_less_arr_responses))
+                first_numbers_end = list(map(first_number, call_less_end_responses))
+                first_numbers_cla = list(map(first_number, extracted_cla_responses))
+                first_numbers_cle = list(map(first_number, extracted_cle_responses))
 
-            stats(model_answers=model_answers, correct_answers=correct_answers, tool_history=tool_histories, answer_type="extracted")
-            stats(model_answers=responses, correct_answers=correct_answers, tool_history=tool_histories, answer_type="bare-responses")
-            try:
-                True
-            except Exception as e:
-                print(e)
-                # Print traceback:
-                traceback.print_exc()
-                print("Stats failed to run")
+                print(f"FIRST NUMBERS ARR: {first_numbers_arr}")
+
+                ex_results["first_numbers_arr"] = first_numbers_arr
+                ex_results["first_numbers_end"] = first_numbers_end
+
+                fn_arr_acc = exact_acc(first_numbers_arr, correct_answers, float)
+                fn_end_acc = exact_acc(first_numbers_end, correct_answers, float)
+                fn_cla_acc = exact_acc(first_numbers_cla, correct_answers, float)
+                fn_cle_acc = exact_acc(first_numbers_cle, correct_answers, float)
+
+                asdiv_acc_a, results_asdiv_a = eval_asdiv(call_less_arr_responses, correct_answers)
+                asdiv_acc_e, results_asdiv_e = eval_asdiv(call_less_end_responses, correct_answers)
+                asdiv_acc_exa, results_asdiv_exa = eval_asdiv(extracted_cla_responses, correct_answers)
+                asdiv_acc_exe, results_asdiv_exe = eval_asdiv(extracted_cle_responses, correct_answers)
+
+                metrics_to_report.append(f"First number in answer (arr): {fn_arr_acc}")
+                metrics_to_report.append(f"First number in answer (end): {fn_end_acc}")
+                metrics_to_report.append(f"First number in answer (extracted arr): {fn_cla_acc}")
+                metrics_to_report.append(f"First number in answer (extracted end): {fn_cle_acc}")
+
+                metrics_to_report.append(f"ASDiv accuracy (arr): {asdiv_acc_a}")
+                metrics_to_report.append(f"ASDiv accuracy (end): {asdiv_acc_e}")
+                metrics_to_report.append(f"ASDiv accuracy (extracted arr): {asdiv_acc_exa}")
+                metrics_to_report.append(f"ASDiv accuracy (extracted end): {asdiv_acc_exe}")
+
+                print(f"ASDIV RESULTS ARR: {results_asdiv_a}")
+                print(f"ASDIV RESULTS END: {results_asdiv_e}")
+                print(f"ASDIV RESULTS EXTRACTED ARR: {results_asdiv_exa}")
+                print(f"ASDIV RESULTS EXTRACTED END: {results_asdiv_exe}")
+
+                print(f"Sum of asdiv results ex arr: {sum(results_asdiv_exa)}")
+                print(f"Len of asdiv results ex arr: {len(results_asdiv_exa)}")
+                print(f"Acc of asdiv results ex arr: {sum(results_asdiv_exa)/len(results_asdiv_exa)}")
+
+                assert len(results_asdiv_a) == len(results_asdiv_e) == len(results_asdiv_exa) == len(results_asdiv_exe) == len(correct_answers)
+
+
+            if "triviaqa" in dataset["name"].lower():
+                ex_results["answer_aliases"] = [d["answer_aliases"] for d in dataset["data"]]
+                trivia_first20 = trivia_qa_accuracy(call_less_end_responses, [d["answer_aliases"] for d in dataset["data"]])
+                trivia_first20_extr = trivia_qa_accuracy(extracted_cle_responses, [d["answer_aliases"] for d in dataset["data"]])
+                metrics_to_report.append(f"Trivia top 20: {trivia_first20}")
+                metrics_to_report.append(f"Trivia top 20 (answer extracted): {trivia_first20_extr}")
+
+
             
-            print(f"Finished experiment {name} for {dataset['name']}")
-            print(ex_results)
-            write_results(ex_results, total_time)
+            #stats(model_answers=extracted_answers, correct_answers=correct_answers, tool_history=tool_histories, answer_type="extracted")
+            #stats(result, tool_history=tool_histories, answer_type="full-responses")
+            
+            metrics = "\n".join(metrics_to_report)
+            results_ascii = f"""
+###########################################################################\n
+    * FINISHED {name} experiment on dataset {dataset['name']} *  
 
+    * Experiment id: {project_description} *
+
+    * Total time taken: {total_time} *
+
+    [metrics]
+
+###########################################################################\n\n""".replace("[metrics]", metrics)
+            
+            for question, resp, answer in zip(questions, responses, correct_answers, strict=True):
+                print(f"QUESTION: {question}")
+                print(f"ANSWER: {answer}")
+                print(f"RESPONSE: {resp}".replace("\n", "\n--"))
+                print()
+            
+            LOGGER.info(f"Finished experiment {name} for {dataset['name']}")
+            LOGGER.warn(results_ascii)
+            TOOLMASTER_LOGGER.warn(results_ascii)
+            LOGGER.debug(ex_results)
+            write_results(ex_results, total_time, benchmark_name = dataset["name"], model_name = f"{project_description}_{name}")
+
+            torch.cuda.empty_cache()
 
     raise SystemExit(42)
     performance_stats = {
