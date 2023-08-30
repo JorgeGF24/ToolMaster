@@ -7,6 +7,7 @@
 *.arrow
 *.log
 stats_*.txt
+*.txt
 *.model
 *.bin
 *.pyc

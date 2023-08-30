@@ -142,18 +142,20 @@ def Calculator(input_query: str, extraargs=None, first=True, detail=False, infer
     for c in operators.keys():
         left, operator, right = input_query.partition(c)
         if len(operator) > 0:
-            answer = round(operators[operator](Calculator(left, first=False), Calculator(right, first=False)), 2)
+            if operator == '-' and len(left) == 0:
+                answer = -Calculator(right, first=False)
+            else:
+                answer = round(operators[operator](Calculator(left, first=False), Calculator(right, first=False)), 2)
             answer = str(answer) if first else answer
             return (answer, True) if detail else answer
-        
 
-        
 
 def run_calculator_tests():
     test_cases = [
         # Basic arithmetic expressions
         ("2+3*4", 14.0),
         ("(2+3)*4", 20.0),
+        ("(2-3)*4", 20.0),
         ("2+(3+4)*5", 37.0),
         ("1+2*3-4/2", 5.0),
 
@@ -210,6 +212,17 @@ stopwords = None
 searcher = None
 
 
+def init_wikisearch():
+    from pyserini.search.lucene import LuceneSearcher
+    from nltk.corpus import stopwords as en_stopwords
+    
+    global searcher, stopwords
+    searcher = LuceneSearcher.from_prebuilt_index('enwiki-paragraphs')
+    stopwords = en_stopwords.words("english")
+
+init_wikisearch()
+
+
 @beartype
 def wiki_parse(args: str):
     global stopwords
@@ -223,17 +236,7 @@ def wiki_parse(args: str):
     args = args.lower()
     # Remove leading and trailing spaces:
     args = args.strip()
-
     return args
-
-
-def init_wikisearch():
-    from pyserini.search.lucene import LuceneSearcher
-    from nltk.corpus import stopwords as en_stopwords
-    
-    global searcher, stopwords
-    searcher = LuceneSearcher.from_prebuilt_index('enwiki-paragraphs')
-    stopwords = en_stopwords.words("english")
     
 
 def WikiSearch(term: str, args = None):
