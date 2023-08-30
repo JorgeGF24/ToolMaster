@@ -14,7 +14,14 @@ source activate
 export PYTHONPATH=/vol/bitbucket/jg2619/augmenting_llms/:$PYTHONPATH
 echo "Evaluating Benchmarks on 48Gb job"
 # Datasets separated by ", ". 
-python eval_benchmark.py "test, asdiv, gms8k-easy, triviaQA" "AY" "DX"
+# Datasets: "test, asdiv, gms8k-easy, gms8k-hard, triviaQA"
+# Models: "AY", "DX", "DX-2", "A basic 0-shot", "A basic 0-shot-b", "A basic 1-shot"
+python eval_benchmark.py "ASDiv-full, triviaQA" "mickey-task, mickey-task-mono, just-gen, just-gen-mono" "$1" 
+#  GPTJ_Master
+#  "small-task, small-task-no-calc, small-task-mono, small-task-no-calc-mono" 
+# med-arg, large, large-mono, large-low-k, large-high-k
+# "med, med-mono, med-low-k" "GPTJ_baseline, GPTJ_Master" "$1"  
+# "test" "small-task" "$1" #                   ##"AY, DX, DX-2, A basic 0-shot, A basic 0-shot-b, A basic 1-shot" "$1" # "asdiv-full, triviaQA" "GPTJ_baseline" # "asdiv, triviaQA-small" "mickey-task"
 /usr/bin/nvidia-smi
 uptime
 duration=$SECONDS
@@ -23,3 +30,5 @@ echo "$(($duration / 60)) minutes and $(($duration % 60)) seconds elapsed."
 
 
 ##########3 ssh cloud-vm-45-11.doc.ic.ac.uk
+
+# 2248 is same as before but top k = 2
