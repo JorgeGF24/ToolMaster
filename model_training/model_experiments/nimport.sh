@@ -13,6 +13,7 @@ echo $(date)
 echo "Starting 48Gb job"
 SECONDS=0
 source activate
+export PYTHONPATH=/vol/bitbucket/jg2619/augmenting_llms/:$PYTHONPATH
 python model_layers.py
 /usr/bin/nvidia-smi
 uptime
