@@ -18,7 +18,7 @@ echo "Evaluating Benchmarks on 48Gb job"
 # Datasets: "test, asdiv, gms8k-easy, gms8k-hard, triviaQA"
 # Models: "AY", "DX", "DX-2", "A basic 0-shot", "A basic 0-shot-b", "A basic 1-shot"
 #python eval_benchmark.py "ASDiv-full, triviaQA" "med, med-no-token, med-no-token-high-k, med-no-token-low-k, med-no-token-mono, med-no-token-0" "$1"
-python eval_benchmark.py "triviaQA" "med-no-token-low-k" "$1"
+python eval_perplexity.py 
 #python eval_benchmark.py "ASDiv-full" "med-arg-0" "$1"
 # "med-no-token, med-no-token-high-k, med-no-token-low-k, med-no-token-mono, med-no-token-0" "$1" 
 # TODO: med-no-token-no-tools-1, med-no-token-no-tools-2

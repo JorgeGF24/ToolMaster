@@ -6,7 +6,7 @@ import torch
 
 from transformers import LlamaForCausalLM, AutoModelForCausalLM
 
-LLAMA = False
+LLAMA = True
 
 cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache"
 """model = AutoModelForCausalLM.from_pretrained(
@@ -35,7 +35,7 @@ else:
 
 
 FROZEN_LAYERS = []
-TRAINED_LAYERS = []
+TOTAL_LAYERS = []
 for i in range(0, 24):
     if i in [13, 19]: continue
     FROZEN_LAYERS += GPTJ_LAYERS[f"Layer {i}"]

@@ -3,7 +3,7 @@ import random
 import sys
 
 import pandas as pd
-from transformers import AutoTokenizer, AutoModelForCausalLM, GPT2Tokenizer, GPT2LMHeadModel, DataCollatorForLanguageModeling, DataCollatorWithPadding, Trainer, TrainingArguments
+from transformers import DataCollatorForLanguageModeling, DataCollatorWithPadding, Trainer, TrainingArguments
 
 import torch
 from datasets import load_dataset, load_dataset_builder, Features, Value, Dataset
@@ -16,16 +16,41 @@ from torch.utils.data import Subset
 import torch.nn as nn
 
 from model_training.model_experiments.GPTJ_layers import GPTJ_LAYERS
+from model_training.model_experiments.LLAMA_layers import LLAMA_LAYERS
 
 import ast
 
 from beartype import beartype
 from beartype.typing import List, Dict, Tuple
 
+DEVICE = "cuda"
+
 pad_sequence = partial(pad_sequence, batch_first=True)
 
+long_tensor = partial(torch.tensor, dtype=torch.long, device=DEVICE)
+int_tensor = partial(torch.tensor, dtype=torch.long, device=DEVICE)
+
 REMOVE_CALCULATOR = False
-ARG_TRAINING = False
+ARG_TRAINING = True
+LORA = False
+SHUFFLE = False
+RAW = False
+MODEL_NAME = "GPTJ"
+MODEL_LAYERS = LLAMA_LAYERS if MODEL_NAME == "LLAMA" else GPTJ_LAYERS
+NO_TOKEN_OPTION = ""# ""#
+METHOD_B = False
+
+TOOL_START_TOKEN = "<TOOL>"
+TOOL_END_TOKEN = "</TOOL>" 
+
+if MODEL_NAME == "GPTJ":
+    TOOL_START_TOKEN = " " + TOOL_START_TOKEN
+
+if LORA:
+    from peft import get_peft_config, get_peft_model, LoraConfig, TaskType
+    peft_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1
+    )
 
 TRAINING_DESCRIPTIONS = [
     """increasing_relevance: Characteristics:
@@ -79,6 +104,7 @@ TRAINING_DESCRIPTIONS = [
         - Data is "better" """,
 
 """ Small set and distracted,
+- Unfroze layers >24
 - Same as distracted with small set
 - Warmup 7%""",
 
@@ -88,6 +114,7 @@ TRAINING_DESCRIPTIONS = [
 - 2000 Calc, 4000 wiki, 1000 Calend""",
 
 """Med set:
+- Unfroze layers >24
 - Same but:
 - 3000 Calc, 6000 wiki, 2000 Calend""",
 
@@ -104,6 +131,40 @@ TRAINING_DESCRIPTIONS = [
 """Large set:
 - Same but:
 - 6000 Calc, 12000 wiki, 4000 Calend""",
+
+
+"""Med set: full, all layers are unfrozen
+arg training, LORA"""
+
+"""Huge full train, no frozen""",
+
+"huge2. same as huge, but shuffle available tool order"
+
+"med-shuffle. same as huge, but shuffle available tool order",
+
+
+"""Small2: Greater lr: 3e-5,
+- 2000 Calc, 4500 Wiki, 1500 calend
+- Warmup 4%,
+- arg training,
+- no shuffle""",
+
+"""Small3: Greater lr: 3e-5,
+- 2200 Calc, 4950 Wiki, 1500 calend
+- Warmup 4%,
+- arg training,
+- no shuffle""",
+
+
+"""Med set: full, all layers are unfrozen
+arg training, LORA""",
+
+"""Med_no_token:
+- Same as med but no tool token:
+- 3000 Calc, 6000 wiki, 2000 Calend""",
+
+""" med2: 
+- same as med but with 3e-5 lr"""
 ]
 
 tool_name_alternatives = {
@@ -187,10 +248,10 @@ tool_name_alternatives = {
                   "FactSeek","factSeek","FACTSEEK","Fact_seek","Fact-Seek","FACT-SEEK","Fact_seek","Fact_Seek","FACT_SEEK",
                   "Encyclopedia","encyclopedia","ENCYCLOPEDIA",
                   "Encyclopaedia","encyclopaedia","ENCYCLOPAEDIA",
-                    "Encyclopedic","encyclopedic","ENCYCLOPEDIC",
+                  "Encyclopedic","encyclopedic","ENCYCLOPEDIC",
                     "InfoTool","infoTool","INFOTOOL","Info_tool","Info-Tool","INFO-TOOL","Info_tool","Info_Tool","INFO_TOOL",
                     "InfoAPI","infoAPI","INFOAPI","Info_api","Info-API","INFO-API","Info_api","Info_Api","INFO_API",
-                    "WikiAPI","wikiAPI","WIKIAPI","Wiki_api","Wiki-API","WIKI-API","Wiki_api","Wiki_Api","WIKI_API",
+                  "WikiAPI","wikiAPI","WIKIAPI","Wiki_api","Wiki-API","WIKI-API","Wiki_api","Wiki_Api","WIKI_API",
                     "BrowserAPI","browserAPI","BROWSERAPI","Browser_api","Browser-API","BROWSER-API","Browser_api","Browser_Api","BROWSER_API",
                     "SearchAPI","searchAPI","SEARCHAPI","Search_api","Search-API","SEARCH-API","Search_api","Search_Api","SEARCH_API",
                     "SearchTool","searchTool","SEARCHTOOL","Search_tool","Search-Tool","SEARCH-TOOL","Search_tool","Search_Tool","SEARCH_TOOL",
@@ -203,6 +264,22 @@ tool_name_alternatives = {
                     "InfoEngine","infoEngine","INFOENGINE","Info_engine","Info-Engine","INFO-ENGINE","Info_engine","Info_Engine","INFO_ENGINE",
                     "InfoExpert","infoExpert","INFOEXPERT","Info_expert","Info-Expert","INFO-EXPERT","Info_expert","Info_Expert","INFO_EXPERT",
                     "DataEngine","dataEngine","DATAENGINE","Data_engine","Data-Engine","DATA-ENGINE","Data_engine","Data_Engine","DATA_ENGINE",
+                    "Internet", "internet", "INTERNET",
+                    "search", "Search", "SEARCH",
+                    "WhatIs", "whatIs", "WHATIS", "What_is", "What-Is", "WHAT-IS", "What_is", "What_Is", "WHAT_IS",
+                    "Info", "info", "INFO",
+                    "Research", "research", "RESEARCH",
+                    "HuntFacts", "huntFacts", "HUNTFACTS", "Hunt_facts", "Hunt-Facts", "HUNT-FACTS", "Hunt_facts", "Hunt_Facts", "HUNT_FACTS",
+                    "LearnPedia", "learnPedia", "LEARNPEDIA", "Learn_pedia", "Learn-Pedia", "LEARN-PEDIA", "Learn_pedia", "Learn_Pedia", "LEARN_PEDIA",
+                    "MyInfo", "myInfo", "MYINFO", "My_info", "My-Info", "MY-INFO", "My_info", "My_Info", "MY_INFO",
+                    "MyFact", "myFact", "MYFACT", "My_fact", "My-Fact", "MY-FACT", "My_fact", "My_Fact", "MY_FACT",
+                    "MyFacts", "myFacts", "MYFACTS", "My_facts", "My-Facts", "MY-FACTS", "My_facts", "My_Facts", "MY_FACTS",
+                    "FastSearch", "fastSearch", "FASTSEARCH", "Fast_search", "Fast-Search", "FAST-SEARCH", "Fast_search", "Fast_Search", "FAST_SEARCH",
+                    "ShortSearch", "shortSearch", "SHORTSEARCH", "Short_search", "Short-Search", "SHORT-SEARCH", "Short_search", "Short_Search", "SHORT_SEARCH",
+                    "QuickSearch", "quickSearch", "QUICKSEARCH", "Quick_search", "Quick-Search", "QUICK-SEARCH", "Quick_search", "Quick_Search", "QUICK_SEARCH",
+                    "QuickFind", "quickFind", "QUICKFIND", "Quick_find", "Quick-Find", "QUICK-FIND", "Quick_find", "Quick_Find", "QUICK_FIND",
+                    "QuickFact", "quickFact", "QUICKFACT", "Quick_fact", "Quick-Fact", "QUICK-FACT", "Quick_fact", "Quick_Fact", "QUICK_FACT",
+                    "QuickFacts", "quickFacts", "QUICKFACTS", "Quick_facts", "Quick-Facts", "QUICK-FACTS", "Quick_facts", "Quick_Facts", "QUICK_FACTS",
                 ],
     "Calendar":["Calendar","calendar","CALENDAR",
                 "Date","date","DATE",
@@ -1394,6 +1471,2241 @@ tool_desc = {
 
 }
 
+if METHOD_B:
+    intention_desc = {
+        "Calculator":{
+            "mix": [
+                "Use a calculator",
+                "Solve a mathematical expression",
+                "Perform arithmetic calculations",
+                "Need to use an arithmetic software",
+                "Calculate numerical values",
+                "Perform calculations with precision",
+                "Utilize a calculator tool",
+                "Perform math operations",
+                "Use a mathematical calculator",
+                "Perform numerical computations",
+                "Employ a digital calculator",
+                "Engage a mathematical tool",
+                "Work with an arithmetic calculator",
+                "Perform complex calculations",
+                "Employ a digital arithmetic tool",
+                "Solve math problems",
+                "Use a math calculator",
+                "Conduct arithmetic computations",
+                "Perform mathematical analyses",
+                "Engage in numerical calculations",
+                "Work with a mathematical software",
+                "Perform precise calculations",
+                "Utilize a digital arithmetic tool",
+                "Engage in mathematical calculations",
+                "Use an arithmetic solver",
+                "Conduct precise arithmetic computations",
+                "Perform mathematical operations",
+                "Employ an arithmetic computation tool",
+                "Work with a math software",
+                "Utilize a digital calculator",
+                "Engage in arithmetic problem solving",
+                "Use a digital math tool",
+                "Conduct calculations with accuracy",
+                "Perform math computations",
+                "Employ a numerical calculator",
+                "Work with a mathematical computation tool",
+                "Utilize a math solver",
+                "Engage in mathematical problem solving",
+                "Use an arithmetic calculation tool",
+                "Conduct numerical computations",
+                "Perform arithmetic analyses",
+                "Employ a calculator for math",
+                "Work with a mathematical solver",
+                "Utilize a numerical calculator",
+                "Engage in math problem solving",
+                "Use a calculator for arithmetic",
+                "Conduct calculations with precision",
+                "Perform math analyses",
+                "Employ a numerical computation tool",
+                "Work with an arithmetic solver",
+                "Utilize a mathematical solver",
+                "Engage in numerical problem solving",
+                "Use a math computation tool",
+                "Conduct mathematical calculations",
+                "Perform calculations accurately",
+                "Employ an arithmetic tool",
+                "Work with a numerical calculator",
+                "Utilize a mathematical calculation tool",
+                "Engage in math calculations",
+                "Use a numerical computation tool",
+                "Conduct mathematical computations",
+                "Perform precise mathematical calculations",
+                "Employ a calculator for arithmetic operations",
+                "Work with a math solver",
+                "Utilize an arithmetic computation tool",
+                "Engage in numerical calculations",
+                "Use a calculator for math operations",
+                "Conduct math computations with precision",
+                "Perform accurate mathematical calculations",
+                "Employ a digital arithmetic solver",
+                "Work with a mathematical computation tool",
+                "Utilize a calculator for math problems",
+                "Engage in arithmetic calculations",
+                "Use a digital math solver",
+                "Conduct math analyses with precision",
+                "Perform mathematical computations accurately",
+                "Employ a calculator for numerical calculations",
+                "Work with an arithmetic calculation tool",
+                "Utilize a mathematical computation tool",
+                "Engage in precise math calculations",
+                "Use a calculator for precise calculations",
+                "Conduct numerical problem solving",
+                "Perform arithmetic operations accurately",
+                "Employ a mathematical computation tool",
+                "Work with a numerical solver",
+                "Utilize a calculator for math analyses",
+                "Engage in accurate mathematical calculations",
+                "Use an arithmetic calculation tool",
+                "Conduct math calculations with accuracy",
+                "Perform precise numerical computations",
+                "Employ a calculator for arithmetic problem solving",
+                "Work with a mathematical solver",
+                "Utilize a numerical computation tool",
+                "Engage in accurate math calculations",
+                "Use a calculator for numerical computations",
+                "Conduct mathematical problem solving",
+                "Perform math operations accurately",
+                "Employ a digital calculator tool",
+                "Work with a mathematical calculation tool",
+                "Utilize a calculator for math computations",
+                "Engage in accurate numerical calculations",
+                "Use an arithmetic computation tool",
+                "Conduct mathematical analyses with precision",
+                "Perform precise math calculations",
+                "Employ a numerical solver",
+                "Work with a math computation tool",
+                "Utilize a calculator for precise mathematical calculations",
+                "Engage in accurate arithmetic calculations",
+                "Use a digital math computation tool",
+                "Conduct accurate mathematical computations",
+                "Perform numerical computations accurately",
+                "Employ a calculator for numerical analyses",
+                "Work with a mathematical calculation tool",
+                "Utilize a calculator for precise math calculations",
+                "Engage in accurate numerical problem solving",
+                "Use an arithmetic solver",
+                "Conduct mathematical operations with precision",
+                "Perform accurate math analyses",
+                "Employ a numerical computation tool",
+                "Work with a calculator for accurate mathematical calculations",
+                "Utilize a mathematical solver",
+                "Engage in numerical calculations with accuracy",
+                "Use a calculator for accurate math computations",
+                "Conduct precise mathematical analyses",
+                "Perform accurate numerical computations",
+                "Employ a mathematical computation tool",
+                "Work with a calculator for numerical problem solving",
+                "Utilize an arithmetic calculation tool",
+                "Engage in precise mathematical operations",
+                "Use a numerical solver",
+                "Conduct mathematical computations with accuracy",
+                "Perform accurate arithmetic analyses",
+                "Employ a calculator for accurate numerical calculations",
+                "Work with a mathematical solver",
+                "Utilize a calculator for mathematical problem solving",
+                "Engage in accurate mathematical analyses",
+                "Use a digital computation tool",
+                "Conduct precise numerical calculations",
+                "Perform mathematical computations with precision",
+                "Employ a calculator for accurate math analyses",
+                "Work with a mathematical computation tool",
+                "Utilize a calculator for numerical calculations with accuracy",
+                "Engage in precise arithmetic problem solving",
+                "Use a digital calculator for precise mathematical calculations",
+                "Conduct accurate math operations",
+                "Perform numerical computations with precision",
+                "Employ a calculator for precise arithmetic analyses",
+                "Work with a numerical computation tool",
+                "Utilize a mathematical solver",
+                "Engage in accurate mathematical problem solving",
+                "Use a calculator for accurate numerical analyses",
+                "Conduct precise math analyses",
+                "Perform accurate math computations",
+                "Employ a calculator for precise numerical calculations",
+                "Work with a mathematical calculation tool",
+                "Utilize a calculator for precise mathematical analyses",
+                "Engage in accurate arithmetic calculations",
+                "Use a digital math solver",
+                "Conduct accurate numerical operations",
+                "Perform precise mathematical computations",
+                "Employ a calculator for accurate math problem solving",
+                "Work with a calculator for mathematical computations",
+                "Utilize a numerical solver",
+                "Engage in accurate numerical calculations",
+                "Use a calculator for accurate mathematical analyses",
+                "Conduct precise math operations",
+                "Perform accurate arithmetic computations",
+                "Employ a calculator for precise mathematical operations",
+                "Work with a mathematical solver",
+                "Utilize a calculator for accurate numerical analyses",
+                "Engage in precise mathematical computations",
+                "Use a digital computation tool",
+                "Conduct accurate math calculations",
+                "Perform precise numerical analyses",
+                "Employ a calculator for accurate arithmetic computations",
+                "Work with a calculator for precise math operations",
+                "Utilize a mathematical calculation tool",
+                "Engage in accurate numerical problem solving",
+                "Use a calculator for accurate mathematical calculations",
+                "Conduct precise arithmetic analyses",
+
+                # ARGS
+                "I need to calculate [ARGS]",
+                "what is the result of [ARGS]?",
+                "compute [ARGS] for me",
+                "can you give me the answer for [ARGS]?",
+                "I'm trying to figure out [ARGS]",
+                "what does [ARGS] equal?",
+                "help me solve [ARGS]",
+                "I'm curious about [ARGS]",
+                "I want to know the value of [ARGS]",
+                "what's the solution to [ARGS]?",
+                "what's the outcome of [ARGS]?",
+                "could you assist with [ARGS]?",
+                "I'm struggling with [ARGS]",
+                "I'd like to understand [ARGS]",
+                "could you calculate [ARGS]?",
+                "what's the value of [ARGS]?",
+                "I need the result for [ARGS]",
+                "please provide the calculation for [ARGS]",
+                "I'm not sure about [ARGS]",
+                "calculate [ARGS] for me",
+                "I need to work out [ARGS]",
+                "please help me solve [ARGS]",
+                "what's the answer for [ARGS]?",
+                "I'm having difficulty with [ARGS]",
+                "can you do the math for [ARGS]?",
+                "I want to find out [ARGS]",
+                "what's [ARGS] equal to?",
+                "please compute [ARGS]",
+                "I'm stuck on [ARGS]",
+                "can you help me with [ARGS]?",
+                "I'm interested in [ARGS]",
+                "please provide the solution for [ARGS]",
+                "I'd like to calculate [ARGS]",
+                "what's the numerical value of [ARGS]?",
+                "please assist with [ARGS]",
+                "I'm facing a challenge with [ARGS]",
+                "can you compute [ARGS] for me?",
+                "I want to determine [ARGS]",
+                "what's the numeric result of [ARGS]?",
+                "please calculate [ARGS]",
+                "I'm unsure about the value of [ARGS]",
+                "can you help me understand [ARGS]?",
+                "I'm requesting a calculation for [ARGS]",
+                "what's the outcome of the calculation [ARGS]?",
+                "I'm encountering difficulty with [ARGS]",
+                "could you assist me with [ARGS]?",
+                "I'd appreciate your help with [ARGS]",
+                "what's the solution to the calculation [ARGS]?",
+                "please provide guidance on [ARGS]",
+                "I need to calculate [ARGS]",
+                "what is the result of [ARGS]?",
+                "compute [ARGS] for me",
+                "can you give me the answer for [ARGS]?",
+                "I'm trying to figure out [ARGS]",
+                "what does [ARGS] equal?",
+                "help me solve [ARGS]",
+                "I'm curious about [ARGS]",
+                "I want to know the value of [ARGS]",
+                "what's the solution to [ARGS]?",
+                "what's the outcome of [ARGS]?",
+                "could you assist with [ARGS]?",
+                "I'm struggling with [ARGS]",
+                "I'd like to understand [ARGS]",
+                "could you calculate [ARGS]?",
+                "what's the value of [ARGS]?",
+                "I need the result for [ARGS]",
+                "please provide the calculation for [ARGS]",
+                "I'm not sure about [ARGS]",
+                "calculate [ARGS] for me",
+                "I need to work out [ARGS]",
+                "please help me solve [ARGS]",
+                "what's the answer for [ARGS]?",
+                "I'm having difficulty with [ARGS]",
+                "can you do the math for [ARGS]?",
+                "I want to find out [ARGS]",
+                "what's [ARGS] equal to?",
+                "please compute [ARGS]",
+                "I'm stuck on [ARGS]",
+                "can you help me with [ARGS]?",
+                "I'm interested in [ARGS]",
+                "please provide the solution for [ARGS]",
+                "I'd like to calculate [ARGS]",
+                "what's the numerical value of [ARGS]?",
+                "please assist with [ARGS]",
+                "I'm facing a challenge with [ARGS]",
+                "can you compute [ARGS] for me?",
+                "I want to determine [ARGS]",
+                "what's the numeric result of [ARGS]?",
+                "please calculate [ARGS]",
+                "I'm unsure about the value of [ARGS]",
+                "can you help me understand [ARGS]?",
+                "I'm requesting a calculation for [ARGS]",
+                "what's the outcome of the calculation [ARGS]?",
+                "I'm encountering difficulty with [ARGS]",
+                "could you assist me with [ARGS]?",
+                "I'd appreciate your help with [ARGS]",
+                "what's the solution to the calculation [ARGS]?",
+                "please provide guidance on [ARGS]",
+                "I'm attempting to solve [ARGS]",
+                "can you find the answer for [ARGS]?",
+                "I'm puzzled by [ARGS]",
+                "what's the calculated result of [ARGS]?",
+                "I need your expertise on [ARGS]",
+                "what does the calculation [ARGS] lead to?",
+                "please help me compute [ARGS]",
+                "I'm seeking the value of [ARGS]",
+                "can you guide me through [ARGS]?",
+                "I'm uncertain about the outcome of [ARGS]",
+                "what's the solution for [ARGS]?",
+                "please assist me in evaluating [ARGS]",
+                "I'm working on [ARGS] and need help",
+                "what will [ARGS] give me?",
+                "I'm looking for the result of [ARGS]",
+                "could you explain [ARGS] to me?",
+                "I'm having trouble with the calculation [ARGS]",
+                "what's the output of [ARGS]?",
+                "please provide the answer to [ARGS]",
+                "I'm trying to compute [ARGS]",
+                "what's the resolution for [ARGS]?",
+                "I'm in need of [ARGS] calculation",
+                "can you help me decipher [ARGS]?",
+                "I'm seeking the calculated value of [ARGS]",
+                "what can you tell me about [ARGS]?",
+                "I'm grappling with [ARGS]",
+                "what's the solution to [ARGS]?",
+                "I'm interested in the calculation [ARGS]",
+                "what's the answer to the problem [ARGS]?",
+                "please guide me in calculating [ARGS]",
+                "I'm unsure how to calculate [ARGS]",
+                "what's the outcome when I input [ARGS]?",
+                "I need to know the solution for [ARGS]",
+                "what's the result if I use [ARGS]?",
+                "I'm attempting to determine [ARGS]",
+                "what does [ARGS] result in?",
+                "I'd like your assistance with [ARGS]",
+                "what's the computed value of [ARGS]?",
+                "please help me with the calculation [ARGS]",
+                "I'm puzzled about [ARGS]",
+                "what's the solution for the input [ARGS]?",
+                "I need help in finding the value of [ARGS]",
+                "what can you tell me about the calculation [ARGS]?",
+                "I'm grappling with understanding [ARGS]",
+                "what will be the outcome of [ARGS]?",
+                "I'm uncertain how to proceed with [ARGS]",
+                "please provide guidance on calculating [ARGS]",
+                "I'm trying to solve for [ARGS]",
+                "what's the answer if I plug in [ARGS]?",
+                "I'm in need of help with [ARGS]",
+                "can you assist me in computing [ARGS]?",
+                "I'm unsure about the result of [ARGS]",
+                "what's the resolution of [ARGS]?",
+                
+                # Shorter ones
+                "calculate [ARGS]",
+                "solve [ARGS]",
+                "compute [ARGS]",
+                "what's [ARGS]?",
+                "evaluate [ARGS]",
+                "find [ARGS]",
+                "help with [ARGS]",
+                "explain [ARGS]",
+                "what is [ARGS]?",
+                "figure out [ARGS]",
+                "what's [ARGS] equal to?",
+                "assist with [ARGS]",
+                "I need [ARGS]",
+                "what's [ARGS]'s value?",
+                "solve for [ARGS]",
+                "I'm stuck on [ARGS]",
+                "can you do [ARGS]?",
+                "I'm curious about [ARGS]",
+                "what does [ARGS] mean?",
+                "compute [ARGS] for me",
+                "can you calculate [ARGS]?",
+                "please explain [ARGS]",
+                "what's the result of [ARGS]?",
+                "I'm trying to solve [ARGS]",
+                "what's the answer for [ARGS]?",
+                "I'm having trouble with [ARGS]",
+                "help me understand [ARGS]",
+                "what's [ARGS] solution?",
+                "compute value of [ARGS]",
+                "what's the outcome of [ARGS]?",
+                "calculate [ARGS] for me",
+                "please help with [ARGS]",
+                "explain [ARGS] to me",
+                "solve this: [ARGS]",
+                "what's the value of [ARGS]?",
+                "I'm not sure about [ARGS]",
+                "find the solution for [ARGS]",
+                "what does [ARGS] equal?",
+                "solve [ARGS] for me",
+                "I'm struggling with [ARGS]",
+                "help me solve [ARGS]",
+                "what's [ARGS]?",
+                "compute the value of [ARGS]",
+                "explain the calculation [ARGS]",
+                "what's the solution for [ARGS]?",
+                "what's [ARGS] result?",
+                "calculate [ARGS]'s value",
+                "I'm unsure about [ARGS]",
+                "can you help with [ARGS]?",
+                "what is the value of [ARGS]?",
+                "compute [ARGS]'s result",
+                "I need to find [ARGS]",
+                "what's [ARGS] outcome?",
+                "compute the answer for [ARGS]",
+                "I'm having difficulty with [ARGS]",
+                "solve this: [ARGS]",
+                "what is [ARGS]'s result?",
+                "calculate [ARGS] for me",
+                "help me with [ARGS]",
+                "explain the value of [ARGS]",
+                "I'm curious about [ARGS]",
+                "what does [ARGS] solve to?",
+                "compute the solution for [ARGS]",
+                "what's the value for [ARGS]?",
+                "I'm trying to calculate [ARGS]",
+                "what's the answer for [ARGS]?",
+                "I'm puzzled by [ARGS]",
+                "help me understand [ARGS]",
+                "what's [ARGS] solution?",
+                "compute value of [ARGS]",
+                "I'm unsure about [ARGS]",
+                "what's the outcome of [ARGS]?",
+                "solve this equation: [ARGS]",
+                "please explain [ARGS]",
+                "I'm facing a challenge with [ARGS]",
+                "calculate [ARGS]'s result",
+                "what does [ARGS] evaluate to?",
+                "help me solve [ARGS]",
+                "what's [ARGS]?",
+                "I need the value of [ARGS]",
+                "compute the result for [ARGS]",
+                "what's the solution for [ARGS]?",
+                "calculate [ARGS]",
+                "I'm having trouble with [ARGS]",
+            ],
+            "add": [
+                "calculate the sum of [ARGS]",
+                "what's the result when you add [ARGS]?",
+                "compute the addition of [ARGS]",
+                "please add [ARGS] for me",
+                "I'm trying to figure out the sum of [ARGS]",
+                "what does the addition of [ARGS] equal?",
+                "help me add [ARGS]",
+                "I'm curious about the total of [ARGS]",
+                "what's the sum of [ARGS]?",
+                "what's the outcome of adding [ARGS]?",
+                "can you assist with adding [ARGS]?",
+                "I'm struggling with adding [ARGS]",
+                "I'd like to understand the result of [ARGS]",
+                "calculate the sum for [ARGS]",
+                "what's the value of adding [ARGS]?",
+                "I need the result for [ARGS]",
+                "please provide the addition for [ARGS]",
+                "I'm not sure about the sum of [ARGS]",
+                "calculate the addition of [ARGS] for me",
+                "I need to work out the sum of [ARGS]",
+                "please help me add [ARGS]",
+                "what's the sum when you add [ARGS]?",
+                "I'm having difficulty with adding [ARGS]",
+                "can you compute the sum of [ARGS]?",
+                "I want to find out the total of [ARGS]",
+                "what's the sum of [ARGS] equal to?",
+                "please compute the addition of [ARGS]",
+                "I'm stuck on adding [ARGS]",
+                "can you help me with the addition of [ARGS]?",
+                "I'm interested in the sum of [ARGS]",
+                "please provide the sum for [ARGS]",
+                "I'd like to calculate the sum of [ARGS]",
+                "what's the numerical value of adding [ARGS]?",
+                "please assist with adding [ARGS]",
+                "I'm facing a challenge with adding [ARGS]",
+                "can you compute the sum for [ARGS]?",
+                "I want to determine the sum of [ARGS]",
+                "what's the numeric result of adding [ARGS]?",
+                "please calculate the addition of [ARGS]",
+                "I'm unsure about the sum of [ARGS]",
+                "can you help me understand adding [ARGS]?",
+                "I'm requesting an addition for [ARGS]",
+                "what's the outcome of adding [ARGS]?",
+                "I'm encountering difficulty with adding [ARGS]",
+                "could you assist me with adding [ARGS]?",
+                "I'd appreciate your help with adding [ARGS]",
+                "what's the solution to the addition of [ARGS]?",
+                "please provide guidance on adding [ARGS]",
+
+                # Short
+                "calculate [ARGS] total",
+                "what's [ARGS] sum?",
+                "compute [ARGS] addition",
+                "help me with [ARGS]",
+                "explain [ARGS] addition",
+                "solve [ARGS] sum",
+                "what's the total of [ARGS]?",
+                "add [ARGS] for me",
+                "find [ARGS] sum",
+                "compute the sum for [ARGS]",
+                "I'm trying to add [ARGS]",
+                "assist with [ARGS] addition",
+                "sum up [ARGS] for me",
+                "please calculate [ARGS] sum",
+                "I'm curious about [ARGS] total",
+                "what does [ARGS] addition equal?",
+                "help me sum [ARGS]",
+                "I'm working with [ARGS]",
+                "calculate the addition for [ARGS]",
+                "I need the [ARGS] sum",
+                "what's [ARGS] outcome?",
+                "compute the total of [ARGS]",
+                "sum [ARGS] numbers",
+                "I'd like to understand [ARGS] addition",
+                "what's [ARGS] summed?",
+                "compute [ARGS] total",
+                "please help with [ARGS]",
+                "what's [ARGS] solution?",
+                "sum [ARGS] values",
+                "I'm interested in [ARGS] sum",
+                "compute the sum of [ARGS]",
+                "what's the value of [ARGS] addition?",
+                "please assist [ARGS]",
+                "find the sum for [ARGS]",
+                "I'm dealing with [ARGS] sum",
+                "calculate [ARGS] result",
+                "what's [ARGS] added up?",
+                "compute [ARGS] sum",
+                "I need help with [ARGS]",
+                "what's [ARGS] summed up?",
+                "calculate [ARGS] total",
+                "please explain [ARGS] addition",
+                "what's [ARGS] value?",
+                "compute the sum for [ARGS]",
+                "sum up [ARGS] numbers",
+                "what's [ARGS] total?",
+                "help me calculate [ARGS]",
+                "I'm puzzled by [ARGS]",
+                "compute [ARGS] outcome",
+
+                # General:
+                "perform addition calculations",
+                "use an addition tool",
+                "solve addition problems",
+                "do number summation",
+                "calculate sums",
+                "add numbers together",
+                "apply addition operations",
+                "use addition software",
+                "compute numerical sums",
+                "perform sum evaluations",
+                "work with addition functions",
+                "apply addition methods",
+                "utilize an addition helper",
+                "execute summation tasks",
+                "solve number addition",
+                "work with sum calculations",
+                "apply numeric addition",
+                "utilize sum calculators",
+                "perform number summations",
+                "execute addition operations",
+                "solve mathematical sums",
+                "use addition aids",
+                "calculate total amounts",
+                "perform number adding",
+                "apply sum techniques",
+                "utilize addition algorithms",
+                "solve number-based additions",
+                "execute numeric summation",
+                "work with sum solutions",
+                "apply addition strategies",
+                "calculate sum results",
+                "perform number totalings",
+                "utilize addition methods",
+                "solve number sum problems",
+                "execute addition tasks",
+                "use addition methodologies",
+                "calculate sum outcomes",
+                "perform numerical additions",
+                "apply sum solutions",
+                "utilize addition techniques",
+                "solve addition challenges",
+                "perform sum evaluations",
+                "work with sum functions",
+                "apply numeric summing",
+                "utilize sum methodologies",
+                "calculate numeric sums",
+                "perform sum calculations",
+                "use sum aids",
+                "apply sum operations",
+                "utilize addition strategies",
+                "solve sum questions",
+            ],
+
+            "subtract": [
+                "calculate the difference of [ARGS]",
+                "what's the result when you subtract [ARGS]?",
+                "compute the subtraction of [ARGS]",
+                "please subtract [ARGS] for me",
+                "I'm trying to figure out the difference of [ARGS]",
+                "what does the subtraction of [ARGS] equal?",
+                "help me subtract [ARGS]",
+                "I'm curious about the result of subtracting [ARGS]",
+                "what's the difference of [ARGS]?",
+                "what's the outcome of subtracting [ARGS]?",
+                "can you assist with subtracting [ARGS]?",
+                "I'm struggling with subtracting [ARGS]",
+                "I'd like to understand the result of subtracting [ARGS]",
+                "calculate the difference for [ARGS]",
+                "what's the value of subtracting [ARGS]?",
+                "I need the result for [ARGS]",
+                "please provide the subtraction for [ARGS]",
+                "I'm not sure about the difference of [ARGS]",
+                "calculate the subtraction of [ARGS] for me",
+                "I need to work out the difference of [ARGS]",
+                "please help me subtract [ARGS]",
+                "what's the difference when you subtract [ARGS]?",
+                "I'm having difficulty with subtracting [ARGS]",
+                "can you compute the difference of [ARGS]?",
+                "I want to find out the result of subtracting [ARGS]",
+                "what's the subtraction of [ARGS] equal to?",
+                "please compute the subtraction of [ARGS]",
+                "I'm stuck on subtracting [ARGS]",
+                "can you help me with the subtraction of [ARGS]?",
+                "I'm interested in the difference of [ARGS]",
+                "please provide the difference for [ARGS]",
+                "I'd like to calculate the difference of [ARGS]",
+                "what's the numerical value of subtracting [ARGS]?",
+                "please assist with subtracting [ARGS]",
+                "I'm facing a challenge with subtracting [ARGS]",
+                "can you compute the difference of [ARGS]?",
+                "I want to determine the difference of [ARGS]",
+                "what's the numeric result of subtracting [ARGS]?",
+                "please calculate the subtraction of [ARGS]",
+                "I'm unsure about the difference of [ARGS]",
+                "can you help me understand subtracting [ARGS]?",
+                "I'm requesting a subtraction for [ARGS]",
+                "what's the outcome of subtracting [ARGS]?",
+                "I'm encountering difficulty with subtracting [ARGS]",
+                "could you assist me with subtracting [ARGS]?",
+                "I'd appreciate your help with subtracting [ARGS]",
+                "what's the solution to the subtraction of [ARGS]?",
+                "please provide guidance on subtracting [ARGS]",
+
+                # Short
+                "calculate [ARGS] difference",
+                "what's [ARGS] result?",
+                "compute [ARGS] subtraction",
+                "help me with [ARGS]",
+                "explain [ARGS] subtraction",
+                "solve [ARGS] difference",
+                "what's the difference of [ARGS]?",
+                "subtract [ARGS] for me",
+                "find [ARGS] result",
+                "compute the difference for [ARGS]",
+                "I'm trying to subtract [ARGS]",
+                "assist with [ARGS] subtraction",
+                "find [ARGS] difference",
+                "please calculate [ARGS] difference",
+                "I'm curious about [ARGS] result",
+                "what does [ARGS] subtraction equal?",
+                "help me find [ARGS]",
+                "I'm working with [ARGS]",
+                "calculate the subtraction for [ARGS]",
+                "I need the [ARGS] difference",
+                "what's [ARGS] outcome?",
+                "compute the result of subtracting [ARGS]",
+                "subtract [ARGS] numbers",
+                "I'd like to understand [ARGS] subtraction",
+                "what's [ARGS] subtracted?",
+                "compute [ARGS] difference",
+                "please help with [ARGS]",
+                "what's [ARGS] solution?",
+                "subtract [ARGS] values",
+                "I'm interested in [ARGS] difference",
+                "compute the difference of [ARGS]",
+                "what's the value of [ARGS] subtraction?",
+                "please assist [ARGS]",
+                "find the difference for [ARGS]",
+                "I'm dealing with [ARGS] subtraction",
+                "calculate [ARGS] result",
+                "what's [ARGS] taken away?",
+                "compute [ARGS] result",
+                "I need help with [ARGS]",
+                "what's [ARGS] subtracted?",
+                "calculate [ARGS] difference",
+                "please explain [ARGS] subtraction",
+                "what's [ARGS] value?",
+                "compute the difference for [ARGS]",
+                "find [ARGS] subtraction",
+                "what's [ARGS] difference?",
+                "help me calculate [ARGS]",
+                "I'm puzzled by [ARGS]",
+                "compute [ARGS] outcome",
+
+                # General
+                "perform subtraction calculations",
+                "use a subtraction tool",
+                "solve subtraction problems",
+                "do number difference",
+                "calculate differences",
+                "subtract numbers",
+                "apply subtraction operations",
+                "use subtraction software",
+                "compute numerical differences",
+                "perform difference evaluations",
+                "work with subtraction functions",
+                "apply subtraction methods",
+                "utilize a subtraction helper",
+                "execute difference tasks",
+                "solve number subtraction",
+                "work with difference calculations",
+                "apply numeric subtraction",
+                "utilize difference calculators",
+                "perform number differences",
+                "execute subtraction operations",
+                "solve mathematical differences",
+                "use subtraction aids",
+                "calculate difference amounts",
+                "perform number subtracting",
+                "apply difference techniques",
+                "utilize subtraction algorithms",
+                "solve number-based subtractions",
+                "execute numeric difference",
+                "work with difference solutions",
+                "apply subtraction strategies",
+                "calculate difference results",
+                "perform number subtracting",
+                "utilize subtraction methods",
+                "solve number difference problems",
+                "execute subtraction tasks",
+                "use subtraction methodologies",
+                "calculate difference outcomes",
+                "perform numerical subtractions",
+                "apply difference solutions",
+                "utilize subtraction techniques",
+                "solve subtraction challenges",
+                "perform difference evaluations",
+                "work with difference functions",
+                "apply numeric subtracting",
+                "utilize difference methodologies",
+                "calculate numeric differences",
+                "perform subtraction calculations",
+                "use subtraction aids",
+                "apply subtraction operations",
+                "utilize subtraction strategies",
+                "solve subtraction questions",
+            ],
+
+            "multiply": [
+                "calculate the product of [ARGS]",
+                "what's the result when you multiply [ARGS]?",
+                "compute the multiplication of [ARGS]",
+                "please multiply [ARGS] for me",
+                "I'm trying to figure out the product of [ARGS]",
+                "what does the multiplication of [ARGS] equal?",
+                "help me multiply [ARGS]",
+                "I'm curious about the result of multiplying [ARGS]",
+                "what's the product of [ARGS]?",
+                "what's the outcome of multiplying [ARGS]?",
+                "can you assist with multiplying [ARGS]?",
+                "I'm struggling with multiplying [ARGS]",
+                "I'd like to understand the result of multiplying [ARGS]",
+                "calculate the product for [ARGS]",
+                "what's the value of multiplying [ARGS]?",
+                "I need the result for [ARGS]",
+                "please provide the multiplication for [ARGS]",
+                "I'm not sure about the product of [ARGS]",
+                "calculate the multiplication of [ARGS] for me",
+                "I need to work out the product of [ARGS]",
+                "please help me multiply [ARGS]",
+                "what's the product when you multiply [ARGS]?",
+                "I'm having difficulty with multiplying [ARGS]",
+                "can you compute the product of [ARGS]?",
+                "I want to find out the result of multiplying [ARGS]",
+                "what's the multiplication of [ARGS] equal to?",
+                "please compute the multiplication of [ARGS]",
+                "I'm stuck on multiplying [ARGS]",
+                "can you help me with the multiplication of [ARGS]?",
+                "I'm interested in the product of [ARGS]",
+                "please provide the product for [ARGS]",
+                "I'd like to calculate the product of [ARGS]",
+                "what's the numerical value of multiplying [ARGS]?",
+                "please assist with multiplying [ARGS]",
+                "I'm facing a challenge with multiplying [ARGS]",
+                "can you compute the product of [ARGS]?",
+                "I want to determine the product of [ARGS]",
+                "what's the numeric result of multiplying [ARGS]?",
+                "please calculate the multiplication of [ARGS]",
+                "I'm unsure about the product of [ARGS]",
+                "can you help me understand multiplying [ARGS]?",
+                "I'm requesting a multiplication for [ARGS]",
+                "what's the outcome of multiplying [ARGS]?",
+                "I'm encountering difficulty with multiplying [ARGS]",
+                "could you assist me with multiplying [ARGS]?",
+                "I'd appreciate your help with multiplying [ARGS]",
+                "what's the solution to the multiplication of [ARGS]?",
+                "please provide guidance on multiplying [ARGS]",
+
+                # Short
+                "calculate [ARGS] product",
+                "what's [ARGS] result?",
+                "compute [ARGS] multiplication",
+                "help me with [ARGS]",
+                "explain [ARGS] multiplication",
+                "solve [ARGS] product",
+                "what's the product of [ARGS]?",
+                "multiply [ARGS] for me",
+                "find [ARGS] result",
+                "compute the product for [ARGS]",
+                "I'm trying to multiply [ARGS]",
+                "assist with [ARGS] multiplication",
+                "find [ARGS] product",
+                "please calculate [ARGS] product",
+                "I'm curious about [ARGS] result",
+                "what does [ARGS] multiplication equal?",
+                "help me find [ARGS]",
+                "I'm working with [ARGS]",
+                "calculate the product for [ARGS]",
+                "I need the [ARGS] product",
+                "what's [ARGS] outcome?",
+                "compute the result of multiplying [ARGS]",
+                "multiply [ARGS] numbers",
+                "I'd like to understand [ARGS] multiplication",
+                "what's [ARGS] multiplied?",
+                "compute [ARGS] product",
+                "please help with [ARGS]",
+                "what's [ARGS] solution?",
+                "multiply [ARGS] values",
+                "I'm interested in [ARGS] product",
+                "compute the product of [ARGS]",
+                "what's the value of [ARGS] multiplication?",
+                "please assist [ARGS]",
+                "find the product for [ARGS]",
+                "I'm dealing with [ARGS] multiplication",
+                "calculate [ARGS] result",
+                "what's [ARGS] multiplied by?",
+                "compute [ARGS] result",
+                "I need help with [ARGS]",
+                "what's [ARGS] multiplied?",
+                "calculate [ARGS] product",
+                "please explain [ARGS] multiplication",
+                "what's [ARGS] value?",
+                "compute the product for [ARGS]",
+                "find [ARGS] multiplication",
+                "what's [ARGS] product?",
+                "help me calculate [ARGS]",
+                "I'm puzzled by [ARGS]",
+                "compute [ARGS] outcome",
+
+                # General
+                "perform multiplication calculations",
+                "use a multiplication tool",
+                "solve multiplication problems",
+                "do number multiplication",
+                "calculate products",
+                "multiply numbers",
+                "apply multiplication operations",
+                "use multiplication software",
+                "compute numerical products",
+                "perform product evaluations",
+                "work with multiplication functions",
+                "apply multiplication methods",
+                "utilize a multiplication helper",
+                "execute product tasks",
+                "solve number multiplication",
+                "work with product calculations",
+                "apply numeric multiplication",
+                "utilize product calculators",
+                "perform number products",
+                "execute multiplication operations",
+                "solve mathematical products",
+                "use multiplication aids",
+                "calculate product amounts",
+                "perform number multiplying",
+                "apply product techniques",
+                "utilize multiplication algorithms",
+                "solve number-based multiplications",
+                "execute numeric product",
+                "work with product solutions",
+                "apply multiplication strategies",
+                "calculate product results",
+                "perform number multiplying",
+                "utilize multiplication methods",
+                "solve number product problems",
+                "execute multiplication tasks",
+                "use multiplication methodologies",
+                "calculate product outcomes",
+                "perform numerical multiplications",
+                "apply product solutions",
+                "utilize multiplication techniques",
+                "solve multiplication challenges",
+                "perform product evaluations",
+                "work with product functions",
+                "apply numeric multiplying",
+                "utilize multiplication methodologies",
+                "calculate numeric products",
+                "perform multiplication calculations",
+                "use multiplication aids",
+                "apply multiplication operations",
+                "utilize multiplication strategies",
+                "solve multiplication questions",
+            ],
+            "divide": [
+                "calculate the quotient of [ARGS]",
+                "what's the result when you divide [ARGS]?",
+                "compute the division of [ARGS]",
+                "please divide [ARGS] for me",
+                "I'm trying to figure out the quotient of [ARGS]",
+                "what does the division of [ARGS] equal?",
+                "help me divide [ARGS]",
+                "I'm curious about the result of dividing [ARGS]",
+                "what's the quotient of [ARGS]?",
+                "what's the outcome of dividing [ARGS]?",
+                "can you assist with dividing [ARGS]?",
+                "I'm struggling with dividing [ARGS]",
+                "I'd like to understand the result of dividing [ARGS]",
+                "calculate the quotient for [ARGS]",
+                "what's the value of dividing [ARGS]?",
+                "I need the result for [ARGS]",
+                "please provide the division for [ARGS]",
+                "I'm not sure about the quotient of [ARGS]",
+                "calculate the division of [ARGS] for me",
+                "I need to work out the quotient of [ARGS]",
+                "please help me divide [ARGS]",
+                "what's the quotient when you divide [ARGS]?",
+                "I'm having difficulty with dividing [ARGS]",
+                "can you compute the quotient of [ARGS]?",
+                "I want to find out the result of dividing [ARGS]",
+                "what's the division of [ARGS] equal to?",
+                "please compute the division of [ARGS]",
+                "I'm stuck on dividing [ARGS]",
+                "can you help me with the division of [ARGS]?",
+                "I'm interested in the quotient of [ARGS]",
+                "please provide the quotient for [ARGS]",
+                "I'd like to calculate the quotient of [ARGS]",
+                "what's the numerical value of dividing [ARGS]?",
+                "please assist with dividing [ARGS]",
+                "I'm facing a challenge with dividing [ARGS]",
+                "can you compute the quotient of [ARGS]?",
+                "I want to determine the quotient of [ARGS]",
+                "what's the numeric result of dividing [ARGS]?",
+                "please calculate the division of [ARGS]",
+                "I'm unsure about the quotient of [ARGS]",
+                "can you help me understand dividing [ARGS]?",
+                "I'm requesting a division for [ARGS]",
+                "what's the outcome of dividing [ARGS]?",
+                "I'm encountering difficulty with dividing [ARGS]",
+                "could you assist me with dividing [ARGS]?",
+                "I'd appreciate your help with dividing [ARGS]",
+                "what's the solution to the division of [ARGS]?",
+                "please provide guidance on dividing [ARGS]",
+
+                # Short
+                "calculate [ARGS] quotient",
+                "what's [ARGS] result?",
+                "compute [ARGS] division",
+                "help me with [ARGS]",
+                "explain [ARGS] division",
+                "solve [ARGS] quotient",
+                "what's the quotient of [ARGS]?",
+                "divide [ARGS] for me",
+                "find [ARGS] result",
+                "compute the quotient for [ARGS]",
+                "I'm trying to divide [ARGS]",
+                "assist with [ARGS] division",
+                "find [ARGS] quotient",
+                "please calculate [ARGS] quotient",
+                "I'm curious about [ARGS] result",
+                "what does [ARGS] division equal?",
+                "help me find [ARGS]",
+                "I'm working with [ARGS]",
+                "calculate the quotient for [ARGS]",
+                "I need the [ARGS] quotient",
+                "what's [ARGS] outcome?",
+                "compute the result of dividing [ARGS]",
+                "divide [ARGS] numbers",
+                "I'd like to understand [ARGS] division",
+                "what's [ARGS] divided?",
+                "compute [ARGS] quotient",
+                "please help with [ARGS]",
+                "what's [ARGS] solution?",
+                "divide [ARGS] values",
+                "I'm interested in [ARGS] quotient",
+                "compute the quotient of [ARGS]",
+                "what's the value of [ARGS] division?",
+                "please assist [ARGS]",
+                "find the quotient for [ARGS]",
+                "I'm dealing with [ARGS] division",
+                "calculate [ARGS] result",
+                "what's [ARGS] divided by?",
+                "compute [ARGS] result",
+                "I need help with [ARGS]",
+                "what's [ARGS] divided?",
+                "calculate [ARGS] quotient",
+                "please explain [ARGS] division",
+                "what's [ARGS] value?",
+                "compute the quotient for [ARGS]",
+                "find [ARGS] division",
+                "what's [ARGS] quotient?",
+                "help me calculate [ARGS]",
+                "I'm puzzled by [ARGS]",
+                "compute [ARGS] outcome",
+
+                # General
+                "perform division calculations",
+                "use a division tool",
+                "solve division problems",
+                "do number division",
+                "calculate quotients",
+                "divide numbers",
+                "apply division operations",
+                "use division software",
+                "compute numerical quotients",
+                "perform quotient evaluations",
+                "work with division functions",
+                "apply division methods",
+                "utilize a division helper",
+                "execute quotient tasks",
+                "solve number division",
+                "work with quotient calculations",
+                "apply numeric division",
+                "utilize quotient calculators",
+                "perform number quotients",
+                "execute division operations",
+                "solve mathematical quotients",
+                "use division aids",
+                "calculate quotient amounts",
+                "perform number dividing",
+                "apply quotient techniques",
+                "utilize division algorithms",
+                "solve number-based divisions",
+                "execute numeric quotient",
+                "work with quotient solutions",
+                "apply division strategies",
+                "calculate quotient results",
+                "perform number dividing",
+                "utilize division methods",
+                "solve number quotient problems",
+                "execute division tasks",
+                "use division methodologies",
+                "calculate quotient outcomes",
+                "perform numerical divisions",
+                "apply quotient solutions",
+                "utilize division techniques",
+                "solve division challenges",
+                "perform quotient evaluations",
+                "work with quotient functions",
+                "apply numeric dividing",
+                "utilize division methodologies",
+                "calculate numeric quotients",
+                "perform division calculations",
+                "use division aids",
+                "apply division operations",
+                "utilize division strategies",
+                "solve division questions",
+            ],
+            "add_subtract": [],
+            "mult_divide": [],
+        },
+        "WikiSearch": [
+        # General descriptions
+        "search the internet for information",
+        "look up details in an encyclopedic source",
+        "access a comprehensive knowledge base",
+        "retrieve relevant information from the web",
+        "gather data from a reputable source",
+        "explore a vast collection of information",
+        "conduct a search on a global information platform",
+        "find information through online research",
+        "access a digital repository of knowledge",
+        "locate data using an online search tool",
+        "retrieve facts and details using a digital resource",
+        "navigate a virtual library of information",
+        "explore a wide range of topics online",
+        "gather knowledge through an online search",
+        "search for data using an information retrieval system",
+        "Conduct a thorough online search",
+        "Access a reliable information source",
+        "Navigate through digital references",
+        "Explore details using online tools",
+        "Retrieve data from the web",
+        "Gather insights from internet resources",
+        "Find comprehensive information online",
+        "Discover facts through online research",
+        "Access a virtual repository of knowledge",
+        "Search for details using digital platforms",
+        "Locate valuable information online",
+        "Investigate topics with online tools",
+        "Browse for insights on the internet",
+        "Retrieve data from reputable sources",
+        "Explore a wealth of information online",
+        "Access a digital encyclopedia",
+        "Search for knowledge using online sources",
+        "Navigate through online databases",
+        "Gather insights from digital platforms",
+        "Find comprehensive details online",
+        "Discover facts through internet research",
+        "Access a wide range of information",
+        "Search for insights using digital tools",
+        "Locate valuable data online",
+        "Investigate subjects with online resources",
+        "Browse for comprehensive details",
+        "Retrieve knowledge from digital sources",
+        "Explore a vast online repository",
+        "Access a digital library",
+        "Search for facts using internet sources",
+        "Navigate through online encyclopedias",
+        "Gather insights from digital research",
+        "Find comprehensive data online",
+        "Discover information through online exploration",
+        "Access a wealth of knowledge",
+        "Search for insights through online platforms",
+        "Locate valuable insights online",
+        "Investigate topics using internet tools",
+        "Browse for detailed information",
+        "Retrieve data from online references",
+        "Explore a diverse range of sources",
+        "Access a digital compendium",
+        "Search for knowledge through digital searches",
+        "Navigate through online knowledge bases",
+        "Gather insights from digital references",
+        "Find comprehensive insights online",
+        "Discover facts through online sources",
+        "Access a comprehensive digital archive",
+        "Search for insights in digital repositories",
+        "Locate valuable knowledge online",
+        "Investigate subjects using online databases",
+        "Browse for detailed insights",
+        "Retrieve data from online platforms",
+        "Explore a digital reservoir of information",
+        "Access a digital resource hub",
+        "Search for facts through online research",
+        "Navigate through online encyclopedias",
+        "Gather insights from digital exploration",
+        "Find comprehensive details online",
+        "Discover knowledge through online sources",
+        "Access a vast digital compendium",
+        "Search for insights in digital libraries",
+        "Locate valuable data online",
+        "Investigate topics with online references",
+        "Browse for detailed knowledge",
+        "Retrieve information from online databases",
+        "Explore a digital collection of information",
+        "Access a digital knowledge repository",
+        "Search for facts using online platforms",
+        "Navigate through digital encyclopedias",
+        "Gather insights from online research",
+        "Find comprehensive information online",
+        "Discover insights through online exploration",
+        "Access a comprehensive digital database",
+        "Search for knowledge using online research",
+        "Locate valuable information online",
+        "Investigate subjects through online resources",
+        "Browse for detailed insights",
+        "Retrieve data from digital sources",
+        "Explore a digital hub of knowledge",
+        "Access a digital information trove",
+        "Search for facts using digital databases",
+        "Navigate through online libraries",
+        "Gather insights from online references",
+        "Find comprehensive data through online searches",
+        "Discover knowledge using digital platforms",
+        "Access a diverse digital repository",
+        "Search for insights using digital encyclopedias",
+        "Locate valuable insights online",
+        "Investigate topics with online exploration",
+        "Browse for comprehensive knowledge",
+        "Retrieve information from digital platforms",
+        "Explore a digital collection of insights",
+        "Access a digital resource center",
+        "Search for facts through digital research",
+        "Navigate through online knowledge bases",
+        "Gather insights from digital databases",
+        "Find comprehensive details through online sources",
+        "Discover information using internet platforms",
+        "Access a wide digital compendium",
+        "Search for insights in online libraries",
+        "Locate valuable data through online exploration",
+        "Investigate subjects using digital references",
+        "Browse for comprehensive information",
+        "Retrieve knowledge from online databases",
+        "Explore a digital repository of insights",
+        # General questions
+        "What is this topic?",
+        "Could you provide an overview?",
+        "Do you have information on this?",
+        "Can you explain this to me?",
+        "What's the story behind this?",
+        "Tell me more about this.",
+        "Can you provide insights?",
+        "What are the details?",
+        "I'm curious about this.",
+        "Can you give some context?",
+        "Could you shed light on this?",
+        "I'd like to know more.",
+        "What's the significance?",
+        "Can you provide background?",
+        "Could you elaborate on this?",
+        "I'm interested in learning.",
+        "Can you explain the basics?",
+        "Do you have any insights?",
+        "Could you help me understand?",
+        "I'm looking for information.",
+        "Tell me about this subject.",
+        "What can you tell me?",
+        "Can you provide details?",
+        "What's the essence of this?",
+        "Tell me something about this.",
+        "Could you clarify this?",
+        "I'd like to get more information.",
+        "What's the importance of this?",
+        "Can you describe this to me?",
+        "Do you have any knowledge?",
+        "Could you share some facts?",
+        "I'm seeking more understanding.",
+        "What's the main point?",
+        "Can you give an explanation?",
+        "Tell me the basics.",
+        "What can you tell me about this?",
+        "Can you provide an insight?",
+        "What's the core of this?",
+        "Tell me more about this.",
+        "Could you offer some context?",
+        "I'd like to know the details.",
+        "What's the background?",
+        "Can you provide an overview?",
+        "What's the essence of this?",
+        "Tell me something about it.",
+        "Could you give more information?",
+        "I'm curious to understand this.",
+        "What's the significance of this?",
+        "Can you shed light on this?",
+        "Tell me more about this.",
+        "Could you explain this further?",
+
+
+        
+        # Personalized descriptions
+        "discover more about [ARGS]",
+        "explore details regarding [ARGS]",
+        "find information on [ARGS]",
+        "access data related to [ARGS]",
+        "locate details about [ARGS]",
+        "gather insights about [ARGS]",
+        "retrieve facts on [ARGS]",
+        "explore [ARGS] through online research",
+        "search for details about [ARGS] on the web",
+        "navigate through information about [ARGS]",
+        "conduct a search on [ARGS]",
+        "look up [ARGS] using an online tool",
+        "search for [ARGS] in the digital space",
+        "gather knowledge about [ARGS] from reputable sources",
+        "retrieve information on [ARGS] from the internet",
+        "explore a wide range of details about [ARGS]",
+        "access a comprehensive overview of [ARGS]",
+        "find data related to [ARGS] on the web",
+        "locate facts about [ARGS] using online resources",
+        "search for information about [ARGS] in online databases",
+        "discover insights into [ARGS] through online exploration",
+        "explore the topic of [ARGS] using online sources",
+        "retrieve relevant details about [ARGS] from the web",
+        "navigate through information about [ARGS] using digital tools",
+        "gather knowledge about [ARGS] from digital repositories",
+        "explore a wide range of information about [ARGS] online",
+        "search for data related to [ARGS] using online platforms",
+        "retrieve information about [ARGS] from online encyclopedias",
+        "explore details about [ARGS] using internet resources",
+        "access information on [ARGS] from online references",
+        "find comprehensive insights about [ARGS] through online searches",
+        "locate detailed information about [ARGS] on the internet",
+        "search for [ARGS] using digital information retrieval systems",
+        "explore the virtual realm for knowledge about [ARGS]",
+        "retrieve facts and details about [ARGS] from online sources",
+        "gather information on [ARGS] from digital databases",
+        "navigate through online information to learn about [ARGS]",
+        "access a wide range of knowledge about [ARGS] using digital tools",
+        "explore online sources to find information about [ARGS]",
+        "search for [ARGS] using internet-based research methods",
+        "retrieve information about [ARGS] from reputable online sources",
+        "locate comprehensive insights about [ARGS] through online searches",
+        "explore online platforms for data related to [ARGS]",
+        "access information on [ARGS] from reliable digital sources",
+        "find details about [ARGS] by searching online",
+        "search for [ARGS] using digital reference materials",
+        "explore online encyclopedias to gather information about [ARGS]",
+        "retrieve facts and details about [ARGS] from online references",
+        "navigate through digital information to understand [ARGS]",
+        "explore online databases for comprehensive insights about [ARGS]",
+        "search for [ARGS] using reputable online resources",
+        "locate information about [ARGS] through online research",
+        "access a virtual treasure trove of information about [ARGS]",
+        "find knowledge about [ARGS] by browsing the internet",
+        "search for [ARGS] using digital search engines",
+        "explore online platforms for comprehensive details about [ARGS]",
+        "retrieve facts about [ARGS] from online encyclopedias",
+        "navigate through internet-based information to learn about [ARGS]",
+        "gather insights into [ARGS] from reliable online sources",
+        "access information about [ARGS] using online research methods",
+        "explore online databases to find information about [ARGS]",
+        "search for [ARGS] through digital reference materials",
+        "retrieve details about [ARGS] from trustworthy online sources",
+        "locate information about [ARGS] by searching online resources",
+        "explore online sources for a comprehensive understanding of [ARGS]",
+        "navigate through digital repositories to gather information about [ARGS]",
+        "search for [ARGS] using internet resources",
+        "access knowledge about [ARGS] from online databases",
+        "find insights into [ARGS] through online exploration",
+        "explore online platforms to retrieve information about [ARGS]",
+        "search for details about [ARGS] using internet-based research",
+        "retrieve comprehensive information about [ARGS] from digital sources",
+        "navigate through digital references to find details about [ARGS]",
+        "gather knowledge about [ARGS] by exploring online resources",
+        "explore the digital realm to discover information about [ARGS]",
+        "locate facts about [ARGS] through online research methods",
+        "search for [ARGS] using reputable online references",
+        "retrieve information about [ARGS] from online databases",
+        "access detailed insights about [ARGS] through digital exploration",
+        "find information on [ARGS] by navigating online sources",
+        "explore online encyclopedias to gather data about [ARGS]",
+        "search for [ARGS] using digital research methods",
+        "retrieve details about [ARGS] from online platforms",
+        "navigate through online references to understand [ARGS]",
+        "access a wealth of information about [ARGS] from digital sources",
+        "explore online databases for in-depth insights about [ARGS]",
+        "search for [ARGS] through reliable online resources",
+        "locate comprehensive details about [ARGS] using online platforms",
+        "find information about [ARGS] by searching the digital realm",
+        "explore online sources to access information about [ARGS]",
+        "retrieve knowledge about [ARGS] from internet-based research",
+        "navigate through digital databases to find information on [ARGS]",
+        "gather insights about [ARGS] from online references",
+        "explore online platforms for detailed data about [ARGS]",
+        "search for [ARGS] using trustworthy online sources",
+        "retrieve comprehensive insights about [ARGS] from online databases",
+        "locate information about [ARGS] by exploring the digital space",
+        "explore online sources to find information on [ARGS]",
+        "search for details about [ARGS] using digital tools",
+        "retrieve information about [ARGS] from online encyclopedias",
+        "navigate through internet-based information to learn more about [ARGS]",
+        "access a vast collection of knowledge about [ARGS] through digital resources",
+        "explore online databases for comprehensive information about [ARGS]",
+        "search for [ARGS] using reputable online platforms",
+        "locate detailed insights about [ARGS] by exploring online sources",
+        "find facts and details about [ARGS] through online research",
+        "retrieve information about [ARGS] from trustworthy online references",
+        "navigate through digital repositories to access information about [ARGS]",
+        "gather knowledge about [ARGS] by searching online databases",
+
+        # First person
+        "I need more information on [ARGS]",
+        "I want to know more about [ARGS]",
+        "I'm curious to learn about [ARGS]",
+        "I'm interested in finding out about [ARGS]",
+        "I'd like to explore details regarding [ARGS]",
+        "I'm looking to gather insights about [ARGS]",
+        "I'd appreciate more facts on [ARGS]",
+        "I want to explore [ARGS] through online research",
+        "I'm searching for details about [ARGS] on the web",
+        "I'm navigating through information about [ARGS]",
+        "I'm conducting a search on [ARGS]",
+        "I want to look up [ARGS] using an online tool",
+        "I'm trying to search for [ARGS] in the digital space",
+        "I'd like to gather knowledge about [ARGS] from reputable sources",
+        "I'm trying to retrieve information on [ARGS] from the internet",
+        "I'm exploring a wide range of details about [ARGS]",
+        "I'd like to access a comprehensive overview of [ARGS]",
+        "I'm attempting to find data related to [ARGS] on the web",
+        "I'm looking to locate facts about [ARGS] using online resources",
+        "I want to search for information about [ARGS] in online databases",
+        "I'm trying to discover more about [ARGS]",
+        "I want to explore details about [ARGS]",
+        "I'm on a mission to find information on [ARGS]",
+        "I'm eager to access data related to [ARGS]",
+        "I'm searching for detailed insights into [ARGS]",
+        "I'd like to retrieve facts on [ARGS]",
+        "I'm interested in exploring [ARGS] through online research",
+        "I'm actively searching for details about [ARGS] on the web",
+        "I'm delving into information about [ARGS]",
+        "I'm in the process of conducting a search on [ARGS]",
+        "I'm looking to gather more insights about [ARGS]",
+        "I'm aiming to find comprehensive information on [ARGS]",
+        "I'm curious to locate data related to [ARGS] on the web",
+        "I'm engaged in searching for facts about [ARGS] using online resources",
+        "I'm focused on retrieving information about [ARGS] from the internet",
+        "I'm determined to explore a wide range of details about [ARGS]",
+        "I'm excited to access a comprehensive overview of [ARGS]",
+        "I'm actively searching for data related to [ARGS] on the web",
+        "I'm dedicated to locating facts about [ARGS] using online resources",
+        "I'm on a quest to search for information about [ARGS] in online databases",
+        "I'm looking to discover more about [ARGS] through online exploration",
+        "I'm keen to retrieve information about [ARGS] from the internet",
+        "I'm invested in exploring a wide range of information about [ARGS]",
+        "I'm on a mission to find data related to [ARGS] using online platforms",
+        "I'm actively seeking insights into [ARGS] through online research",
+        "I'm in the process of accessing information on [ARGS] from online references",
+        "I'm determined to find comprehensive insights about [ARGS] through online searches",
+        "I'm eager to locate detailed information about [ARGS] on the internet",
+        "I'm committed to searching for [ARGS] using digital information retrieval systems",
+        "I'm excited to explore the virtual realm for knowledge about [ARGS]",
+        "I'm dedicated to retrieving facts and details about [ARGS] from online sources",
+        "I'm interested in gathering information on [ARGS] from digital databases",
+        "I'm actively navigating through online information to learn about [ARGS]",
+        "I'm aiming to access a wide range of knowledge about [ARGS] using digital tools",
+        "I'm on a quest to explore online sources to find information about [ARGS]",
+        "I'm invested in searching for [ARGS] using internet-based research methods",
+        "I'm determined to retrieve information about [ARGS] from reputable online sources",
+        "I'm eager to locate comprehensive insights about [ARGS] through online searches",
+        "I'm committed to exploring online platforms for data related to [ARGS]",
+        "I'm interested in accessing information on [ARGS] from reliable digital sources",
+        "I'm dedicated to finding details about [ARGS] by searching online",
+        "I'm excited to search for [ARGS] using digital reference materials",
+        "I'm actively exploring online encyclopedias to gather information about [ARGS]",
+        "I'm aiming to retrieve facts and details about [ARGS] from online references",
+        "I'm focused on navigating through digital information to understand [ARGS]",
+        "I'm in the process of exploring online databases for comprehensive insights about [ARGS]",
+        "I'm eager to search for [ARGS] using reputable online resources",
+        "I'm dedicated to locating information about [ARGS] through online research",
+        "I'm committed to accessing a virtual treasure trove of information about [ARGS]",
+        "I'm interested in finding knowledge about [ARGS] by browsing the internet",
+        "I'm on a quest to search for [ARGS] using digital search engines",
+        "I'm invested in exploring online platforms for comprehensive details about [ARGS]",
+        "I'm determined to retrieve facts about [ARGS] from online encyclopedias",
+        "I'm eager to navigate through internet-based information to learn about [ARGS]",
+        "I'm actively seeking insights into [ARGS] from reliable online sources",
+        "I want to know more about [ARGS]",
+
+        # Action
+        "Search [ARGS] in the Wikipedia",
+        "Explore information about [ARGS]",
+        "Retrieve details about [ARGS]",
+        "Gather insights on [ARGS]",
+        "Access facts regarding [ARGS]",
+        "Find information on [ARGS]",
+        "Discover more about [ARGS]",
+        "Navigate through [ARGS] details",
+        "Look up [ARGS] using online resources",
+        "Retrieve comprehensive data about [ARGS]",
+        "Browse the internet for [ARGS]",
+        "Access a wide range of information about [ARGS]",
+        "Locate details on [ARGS] from reliable sources",
+        "Investigate [ARGS] using online research",
+        "Search for [ARGS] details on the web",
+        "Explore the topic of [ARGS] online",
+        "Access a digital repository for [ARGS]",
+        "Gather knowledge about [ARGS] from reputable sources",
+        "Find insights into [ARGS] using online platforms",
+        "Retrieve comprehensive insights about [ARGS] from the internet",
+        "Navigate through online references to understand [ARGS]",
+
+        # Questions
+        "What is [ARGS]?",
+        "Tell me about [ARGS]",
+        "Can you provide information on [ARGS]?",
+        "What can you tell me about [ARGS]?",
+        "What's the story behind [ARGS]?",
+        "What are the details about [ARGS]?",
+        "Could you give me an overview of [ARGS]?",
+        "I'd like to learn more about [ARGS]",
+        "Do you have any insights on [ARGS]?",
+        "Could you help me understand [ARGS]?",
+        "I'm interested in the background of [ARGS]",
+        "Can you provide me with information about [ARGS]?",
+        "Tell me something about [ARGS]",
+        "Could you shed light on [ARGS]?",
+        "I'm curious about [ARGS]",
+        "Can you give me some context on [ARGS]?",
+        "Do you know anything about [ARGS]?",
+        "What's the significance of [ARGS]?",
+        "Could you explain [ARGS] to me?",
+        "I'm looking for details about [ARGS]",
+        "Tell me the basics of [ARGS]",
+        "I'm wondering what [ARGS] is",
+        "Can you tell me more about [ARGS]?",
+        "Could you elaborate on [ARGS]?",
+        "I'd like to get more information about [ARGS]",
+        "I'm interested in [ARGS], can you provide information?",
+        "Could you give me an idea of [ARGS]?",
+        "I'm seeking more knowledge about [ARGS]",
+        "Can you provide some insights into [ARGS]?",
+        "What's the information available on [ARGS]?",
+        "I'm trying to learn about [ARGS], could you help?",
+        "Do you have any information available about [ARGS]?",
+        "What details can you share about [ARGS]?",
+        "I'm looking for details on [ARGS]",
+        "Can you tell me more about [ARGS]?",
+        "I'm curious about [ARGS], what can you tell me?",
+        "What is known about [ARGS]?",
+        "I'd like to find more information about [ARGS]",
+        "I'm interested in [ARGS], can you give me an overview?",
+        "What can you tell me about [ARGS]?",
+        "Can you provide insights on [ARGS]?",
+        "I'm seeking information about [ARGS], can you help?",
+        "Tell me more about [ARGS], please.",
+
+        # Short commands:
+        "Retrieve information about [ARGS]",
+        "Access details on [ARGS]",
+        "Search for data on [ARGS]",
+        "Find content related to [ARGS]",
+        "Provide insights on [ARGS]",
+        "Explore the web for [ARGS]",
+        "Get information about [ARGS]",
+        "Look up details on [ARGS]",
+        "Search for resources about [ARGS]",
+        "Find relevant content about [ARGS]",
+        "Offer insights on [ARGS]",
+        "Discover web content on [ARGS]",
+        "Retrieve data related to [ARGS]",
+        "Access resources about [ARGS]",
+        "Look up information on [ARGS]",
+        "Search for details about [ARGS]",
+        "Provide information about [ARGS]",
+        "Explore web content about [ARGS]",
+        "Get details on [ARGS]",
+        "Find data about [ARGS]",
+        "Offer resources on [ARGS]",
+        "Discover information on [ARGS]",
+        "Retrieve web content about [ARGS]",
+        "Access data about [ARGS]",
+        "Look up resources on [ARGS]",
+        "Search for insights on [ARGS]",
+        "Provide data on [ARGS]",
+        "Explore information about [ARGS]",
+        "Get insights on [ARGS]",
+        "Find web content related to [ARGS]",
+        "Offer details on [ARGS]",
+        "Discover data about [ARGS]",
+        "Retrieve resources on [ARGS]",
+        "Access insights about [ARGS]",
+        "Look up web content about [ARGS]",
+        "Search for resources related to [ARGS]",
+        "Provide web content about [ARGS]",
+        "Explore data about [ARGS]",
+        "Get resources on [ARGS]",
+        "Find insights on [ARGS]",
+        "Offer web content about [ARGS]",
+        "Discover insights about [ARGS]",
+        "Retrieve resources about [ARGS]",
+        "Access web content on [ARGS]",
+        "Look up data about [ARGS]",
+        "Search for web content about [ARGS]",
+        "Provide resources on [ARGS]",
+        "Explore insights about [ARGS]",
+        "Get resources related to [ARGS]",
+        "Find web content about [ARGS]",
+        "Offer data on [ARGS]",
+        "Discover resources about [ARGS]",
+        "Retrieve insights about [ARGS]",
+        "Access data related to [ARGS]",
+        "Look up insights on [ARGS]",
+        "Search for data related to [ARGS]",
+        "Provide details about [ARGS]",
+        "Explore resources about [ARGS]",
+        "Get insights related to [ARGS]",
+        "Find details on [ARGS]",
+        "Offer information related to [ARGS]",
+        "Discover details about [ARGS]",
+        "Retrieve information on [ARGS]",
+        "Access insights on [ARGS]",
+        "Look up resources related to [ARGS]",
+        "Search for details related to [ARGS]",
+        "Provide insights related to [ARGS]",
+        "Explore details on [ARGS]",
+        "Get information related to [ARGS]",
+        "Find insights about [ARGS]",
+        "Offer resources related to [ARGS]",
+        "Discover information related to [ARGS]",
+        "Retrieve web content related to [ARGS]",
+        "Access resources related to [ARGS]",
+        "Look up insights about [ARGS]",
+        "Search for information about [ARGS]",
+        "Provide web content related to [ARGS]",
+        "Explore insights related to [ARGS]",
+        "Get details related to [ARGS]",
+        "Find data related to [ARGS]",
+        "Offer web content related to [ARGS]",
+        "Discover web content related to [ARGS]",
+        "Retrieve details related to [ARGS]",
+        "Access data about [ARGS]",
+        "Look up web content related to [ARGS]",
+        "Search for resources about [ARGS]",
+        "Provide data related to [ARGS]",
+        "Explore web content related to [ARGS]",
+        "Get resources about [ARGS]",
+        "Find insights related to [ARGS]",
+        "Offer information about [ARGS]",
+        "Discover data related to [ARGS]",
+        "Retrieve resources about [ARGS]",
+        "Access insights related to [ARGS]",
+        "Look up information about [ARGS]",
+        "Search for data about [ARGS]",
+        "Provide details related to [ARGS]",
+        "Explore resources related to [ARGS]",
+        "Get insights about [ARGS]",
+        "Find information about [ARGS]",
+        "Offer details related to [ARGS]",
+        "Discover insights related to [ARGS]",
+        "Retrieve information related to [ARGS]",
+        "Access web content about [ARGS]",
+        "Look up resources about [ARGS]",
+        "Search for insights about [ARGS]",
+        "Provide insights about [ARGS]",
+        "Explore web content about [ARGS]",
+        "Get data related to [ARGS]",
+        "Find resources related to [ARGS]",
+        "Offer web content about [ARGS]",
+        "Discover details about [ARGS]",
+        "Retrieve insights related to [ARGS]",
+        "Access data related to [ARGS]",
+        "Look up details about [ARGS]",
+        "Search for web content about [ARGS]",
+        "Provide data about [ARGS]",
+        "Explore insights about [ARGS]",
+        "Get information related to [ARGS]",
+        "Find web content about [ARGS]",
+        "Offer resources about [ARGS]",
+        "Discover web content about [ARGS]",
+        "Retrieve data related to [ARGS]",
+        "Access information related to [ARGS]",
+        "Look up insights related to [ARGS]",
+        "Search for details about [ARGS]",
+        "Provide web content about [ARGS]",
+        "Explore data related to [ARGS]",
+        "Get resources related to [ARGS]",
+        "Find insights related to [ARGS]",
+        "Offer data about [ARGS]",
+        "Discover information about [ARGS]",
+        "Retrieve details about [ARGS]",
+        "Access resources related to [ARGS]",
+        "Look up insights related to [ARGS]",
+        "Search for information related to [ARGS]",
+        "Provide details about [ARGS]",
+        "Explore web content related to [ARGS]",
+        "Get insights related to [ARGS]",
+        "Find data about [ARGS]",
+        "Offer resources related to [ARGS]",
+        "Discover insights related to [ARGS]",
+        "Retrieve information about [ARGS]",
+        "Access details on [ARGS]",
+        "Look up data on [ARGS]",
+        "Search for content related to [ARGS]",
+        "Provide insights on [ARGS]",
+        "Explore the web for [ARGS]",
+        "Get information about [ARGS]",
+        "Look up details on [ARGS]",
+        "Search for resources about [ARGS]",
+        "Find relevant content about [ARGS]",
+        "Offer insights on [ARGS]",
+        "Discover web content on [ARGS]",
+        "Retrieve data related to [ARGS]",
+        "Access resources about [ARGS]",
+        "Look up information on [ARGS]",
+        "Search for details about [ARGS]",
+        "Provide information about [ARGS]",
+        "Explore web content about [ARGS]",
+        "Get details on [ARGS]",
+        "Find data about [ARGS]",
+        "Offer resources on [ARGS]",
+        "Discover information on [ARGS]",
+        "Retrieve web content about [ARGS]",
+        "Access data about [ARGS]",
+        "Look up resources on [ARGS]",
+        "Search for insights on [ARGS]",
+        "Provide data on [ARGS]",
+        "Explore information about [ARGS]",
+        "Get insights on [ARGS]",
+        "Find web content related to [ARGS]",
+        "Offer details on [ARGS]",
+        "Discover data about [ARGS]",
+        "Retrieve resources on [ARGS]",
+        "Access insights about [ARGS]",
+        "Look up web content about [ARGS]",
+        "Search for resources related to [ARGS]",
+        "Provide web content about [ARGS]",
+        "Explore data about [ARGS]",
+        "Get resources on [ARGS]",
+        "Find insights on [ARGS]",
+        "Offer web content about [ARGS]",
+        "Discover insights about [ARGS]",
+        "Retrieve resources about [ARGS]",
+        "Access web content on [ARGS]",
+        "Look up data about [ARGS]",
+        "Search for web content about [ARGS]",
+        "Provide resources on [ARGS]",
+        "Explore insights about [ARGS]",
+        "Get resources related to [ARGS]",
+        "Find web content about [ARGS]",
+        "Offer data on [ARGS]",
+        "Discover resources about [ARGS]",
+        "Retrieve insights about [ARGS]",
+        "Access data related to [ARGS]",
+
+        # Shorter?
+        "Retrieve [ARGS]",
+        "Access info about [ARGS]",
+        "Search for [ARGS]",
+        "Find details on [ARGS]",
+        "Get insights on [ARGS]",
+        "Explore [ARGS]",
+        "Provide data on [ARGS]",
+        "Discover [ARGS]",
+        "Look up [ARGS]",
+        "Access web content on [ARGS]",
+        "Search [ARGS]",
+        "Find [ARGS]",
+        "Retrieve info about [ARGS]",
+        "Explore the web for [ARGS]",
+        "Discover insights on [ARGS]",
+        "Access resources on [ARGS]",
+        "Search for content about [ARGS]",
+        "Find data on [ARGS]",
+        "Get web content about [ARGS]",
+        "Look up insights about [ARGS]",
+        "Provide web content on [ARGS]",
+        "Explore insights on [ARGS]",
+        "Access content about [ARGS]",
+        "Search the web for [ARGS]",
+        "Find web content on [ARGS]",
+        "Look up resources about [ARGS]",
+        "Get details about [ARGS]",
+        "Access data on [ARGS]",
+        "Search online for [ARGS]",
+        "Find information on [ARGS]",
+        "Look up data about [ARGS]",
+        "Get resources on [ARGS]",
+        "Access insights about [ARGS]",
+        "Search for info about [ARGS]",
+        "Find insights about [ARGS]",
+        "Look up web content about [ARGS]",
+        "Discover resources on [ARGS]",
+        "Access details about [ARGS]",
+        "Search Wikipedia for [ARGS]",
+        "Find web info about [ARGS]",
+        "Look up info about [ARGS]",
+        "Access Wikipedia for [ARGS]",
+        "Search the internet for [ARGS]",
+        "Find Wikipedia info about [ARGS]",
+        "Look up Wikipedia info about [ARGS]",
+        "Get Wikipedia info about [ARGS]",
+        "Access online info about [ARGS]",
+        "Search for Wikipedia info about [ARGS]",
+        "Find online info about [ARGS]",
+        "Retrieve Wikipedia info about [ARGS]",
+        "Look up online info about [ARGS]",
+
+    ],
+
+    "Calendar": [
+        # General descriptions
+        # General descriptions
+        "Retrieve the current date",
+        "Get the present day's date",
+        "Access the current year",
+        "Obtain the date for today",
+        "Retrieve today's date",
+        "Get the current day's date",
+        "Access the date of today",
+        "Obtain the present year",
+        "Retrieve the date for the current day",
+        "Get today's date information",
+        "Access today's year",
+        "Obtain the present day's date",
+        "Retrieve the current year's date",
+        "Get the date for the current day",
+        "Access today's date",
+        "Obtain the year for today",
+        "Retrieve the date for today's day",
+        "Get the present date",
+        "Access the current year's date",
+        "Obtain the current date",
+        "Get today's year",
+        "Access today's day of the week",
+        "Obtain the present date's year",
+        "Retrieve today's day",
+        "Get the current year's date",
+        "Access the year for today",
+        "Obtain the current day's year",
+        "Retrieve the day of the week for today",
+        "Get today's day",
+        "Access today's month",
+        "Obtain the current day's year",
+        "Retrieve today's year",
+        "Get the day of the week for today",
+        "Access the month for today",
+        "Obtain the current year's day",
+        "Retrieve today's month",
+        "Get the year for today's day",
+        "Access the day of the week for the current day",
+        "Obtain the month for today's day",
+        "Retrieve the current day's month",
+        "Get the year for the current day's date",
+        "Access the month for the current day's date",
+        "Obtain the current month",
+        "Retrieve the month for the current day's date",
+        "Get the year for this day",
+        "Access the month for this day",
+        "Obtain the current month's year",
+        "Retrieve the month for this date",
+        "Get the year for this date",
+        "Access the month for this date",
+        "Obtain the year for this month",
+        "Retrieve the month for this year",
+        "Get the date for this month",
+        "Access the year for this month",
+        "Obtain the day for this month",
+        "Retrieve the year for this month",
+        "Get the date for this year",
+        "Access the month for this year",
+        "Obtain the day for this year",
+        "Retrieve the date for this year",
+        "Get the year for this day",
+        "Access the day for this date",
+        "Obtain the date for this day",
+        "Retrieve the day for this month",
+        "Get the year for today's month",
+        "Access the date for today's month",
+        "Obtain the current month's day",
+        "Retrieve the date for today's month",
+        "Get today's day of the month",
+        "Access today's year's month",
+        "Obtain the day of the month for today",
+        "Retrieve today's month's day",
+        "Get today's month's year",
+        "Access today's day of the month",
+        "Obtain the day of the month for today's date",
+        "Retrieve today's month's year",
+        "Get today's date's day of the month",
+        "Access today's year's month",
+        "Obtain the day of the month for this day",
+        "Retrieve the month's year for this date",
+        "Get the day of the month for this year",
+        "Access the year's month for this day",
+        "Obtain the month's day for this year",
+        "Retrieve the date's day of the month for this month",
+        "Get the year's month for this date",
+        "Access the day of the month for this year's month",
+        "Obtain the month's day for this year's date",
+        "Retrieve the month's year for this month",
+        "Get the date's day of the month for this year",
+        "Access the year's month for this month's day",
+        "Obtain the month's day for this month's date",
+
+        # Short questions
+        "Get today's date",
+        "Access current year",
+        "What's the date?",
+        "Today's day?",
+        "What day is it?",
+        "Current date?",
+        "Today's year?",
+        "Present date?",
+        "Year now?",
+        "Today?",
+        "Year?",
+        "Date please?",
+        "Day today?",
+        "Current year?",
+        "Today's month?",
+        "What's today?",
+        "Date?",
+        "Year now?",
+        "Now?",
+        "Day?",
+        "Today's?",
+        "Year today?",
+        "Current day?",
+        "What date?",
+        "Year this?",
+        "What's now?",
+        "Today's day?",
+        "This year?",
+        "Date now?",
+        "Today's date?",
+        "Current month?",
+        "Day of week?",
+        "Day of week now?",
+        "Today's year?",
+        "Today's day?",
+        "Year of now?",
+        "Day today?",
+        "Year now?",
+        "Month today?",
+        "What's today?",
+        "Date of now?",
+        "Now?",
+        "Day?",
+        "Today's date?",
+        "Year today?",
+        "Current day?",
+        "Today's month?",
+        "What's today?",
+        "Year now?",
+        "Day today?",
+        "Now?",
+        "Date now?",
+        "Today's day?",
+        "Today's year?",
+        "Present date?",
+        "Year?",
+        "Today?",
+        "What day?",
+        "Current date?",
+        "Date?",
+        "Day?",
+        "Today's?",
+        "Now?",
+        "Year today?",
+        "Today's month?",
+        "What's today?",
+        "Date please?",
+        "Year now?",
+        "Today's day?",
+        "Access current year",
+        "Get today's date",
+        "What day is it?",
+        "Current date?",
+        "Today?",
+        "Year now?",
+        "Today's year?",
+        "Today's date?",
+        "Current day?",
+        "Date now?",
+        "Day today?",
+        "What's today?",
+        "Year?",
+        "Now?",
+        "Date?",
+        "Today's?",
+        "Day of week?",
+        "Access current year",
+        "What's the date?",
+        "Today's month?",
+        "Current year?",
+        "Year today?",
+        "Today's day?",
+        "Now?",
+        "Year of now?",
+        "Day today?",
+        "Date of now?",
+        "Today's date?",
+        "Today's year?",
+        "Month today?",
+        "Access current year",
+        "Day of week now?",
+        "Today's year?",
+        "Today's day?",
+        "Year of now?",
+        "Day today?",
+        "Date of now?",
+        "Today's month?",
+        "Day of week now?",
+        "Today's year?",
+        "Today's date?",
+        "Current year?",
+        "Year today?",
+        "Today's day?",
+        "Access current year",
+        "What's the date?",
+        "Today's month?",
+        "Current day?",
+        "Date now?",
+        "Today's year?",
+        "Month today?",
+        "What day is it?",
+        "Today?",
+        "Year now?",
+        "Today's date?",
+        "Current month?",
+        "Year of now?",
+        "Day today?",
+        "Date of now?",
+        "Today's day?",
+        "Access current year",
+        "Today's year?",
+        "Today's date?",
+        "Current year?",
+        "Year today?",
+        "Today's day?",
+        "Today?",
+        "What's the date?",
+        "Current month?",
+        "Today's month?",
+        "Date now?",
+        "Day today?",
+        "Today's day?",
+        "Year now?",
+        "Access current year",
+        "What's the date?",
+        "Today's month?",
+        "Current date?",
+        "Today?",
+        "Year now?",
+        "Today's year?",
+        "Today's date?",
+        "Year?",
+        "Now?",
+        "Date?",
+        "Day?",
+        "Today's?",
+        "Now?",
+        "Year today?",
+        "Today's month?",
+        "What's today?",
+        "Date please?",
+        "Year now?",
+        "Today's day?",
+        "Access current year",
+        "Get today's date",
+        "What day is it?",
+        "Current date?",
+        "Today?",
+        "Year now?",
+        "Today's year?",
+        "Today's date?",
+    
+    # Short commands
+        "Retrieve today's date",
+        "Access the current year",
+        "Provide today's year",
+        "Show today's day",
+        "Display today's month",
+        "Give current date",
+        "Present today's year",
+        "Fetch today's month",
+        "Offer present date",
+        "Supply today's day",
+        "Get today's year",
+        "Share current date",
+        "Retrieve present year",
+        "Provide today's month",
+        "Display today's date",
+        "Offer current day",
+        "Show present year",
+        "Provide today's day",
+        "Access current month",
+        "Get current date",
+        "Present today's date",
+        "Retrieve today's year",
+        "Supply today's month",
+        "Share today's date",
+        "Give current year",
+        "Fetch present month",
+        "Display current date",
+        "Offer today's month",
+        "Get present day",
+        "Present current year",
+        "Retrieve present month",
+        "Provide current date",
+        "Access today's day",
+        "Share present year",
+        "Show today's date",
+        "Provide present day",
+        "Give today's month",
+        "Display current year",
+        "Offer today's day",
+        "Supply current month",
+        "Fetch current year",
+        "Retrieve present day",
+        "Present current date",
+        "Show current month",
+        "Get today's day",
+        "Share today's year",
+        "Access present day",
+        "Offer current month",
+        "Provide current year",
+        "Display present date",
+        "Give present month",
+        "Retrieve current date",
+        "Fetch today's month",
+        "Show present day",
+        "Supply today's year",
+        "Present current month",
+        "Display today's day",
+        "Offer present month",
+        "Access today's year",
+        "Provide present year",
+        "Get current day",
+        "Retrieve current year",
+        "Show current date",
+        "Give current month",
+        "Supply present day",
+        "Display today's month",
+        "Offer today's year",
+        "Present present date",
+        "Fetch current month",
+        "Access present year",
+        "Retrieve today's day",
+        "Share current month",
+        "Give today's day",
+        "Provide current day",
+        "Display present year",
+        "Supply present month",
+        "Present today's day",
+        "Get present year",
+        "Show present date",
+        "Offer current day",
+        "Retrieve present year",
+        "Access current day",
+        "Show current year",
+        "Give present day",
+        "Provide today's year",
+        "Display present month",
+        "Get current month",
+        "Supply current year",
+        "Fetch present year",
+        "Offer present day",
+        "Present today's month",
+        "Retrieve current month",
+        "Access today's month",
+        "Show current day",
+        "Give current year",
+        "Display today's year",
+        "Provide present month",
+        "Get present date",
+        "Share today's day",
+        "Present current day",
+        "Offer today's date",
+        "Fetch current day",
+        "Show today's month",
+        "Retrieve present date",
+        "Access current month",
+        "Supply current day",
+        "Display today's year",
+        "Give present year",
+        "Present present month",
+        "Offer current date",
+        "Get today's month",
+        "Show present year",
+        "Provide present date",
+        "Access today's day",
+        "Share current date",
+        "Retrieve present month",
+        "Supply today's day",
+        "Display current day",
+        "Offer today's month",
+        "Present present year",
+        "Fetch today's year",
+        "Show current month",
+        "Provide current day",
+        "Get present year",
+        "Access present month",
+        "Retrieve current date",
+        "Share present date",
+        "Give today's year",
+        "Supply present month",
+        "Display today's day",
+        "Offer current year",
+        "Get current day",
+        "Present today's year",
+        "Show present date",
+        "Retrieve today's date",
+        "Access the current year",
+        "Provide today's year",
+        "Show today's day",
+        "Display today's month",
+        "Give current date",
+        "Present today's year",
+        "Fetch today's month",
+        "Offer present date",
+        "Supply today's day",
+        "Get today's year",
+        "Share current date",
+        "Retrieve present year",
+        "Provide today's month",
+        "Display today's date",
+        "Offer current day",
+        "Show present year",
+        "Provide today's day",
+        "Access current month",
+        "Get current date",
+        "Present today's date",
+        "Retrieve today's year",
+        "Supply today's month",
+        "Share today's date",
+        "Give current year",
+        "Fetch present month",
+        "Display current date",
+        "Offer today's month",
+        "Get present day",
+        "Present current year",
+        "Retrieve present month",
+        "Provide current date",
+        "Access today's day",
+        "Share present year",
+        "Show today's date",
+        "Provide present day",
+        "Give today's month",
+        "Display current year",
+        "Offer today's day",
+        "Supply current month",
+        "Fetch current year",
+        "Retrieve present day",
+        "Present current date",
+        "Show current month",
+        "Get today's day",
+        "Share today's year",
+        "Access present day",
+        "Offer current month",
+        "Provide current year",
+        "Display present date",
+        "Give present month",
+        "Retrieve current date",
+        "Fetch today's month",
+        "Show present day",
+        "Supply today's year",
+        "Present current month",
+        "Display today's day",
+        "Offer present month",
+        "Access today's year",
+        "Provide present year",
+        "Get current day",
+        "Retrieve current year",
+        "Show current date",
+        "Give current month",
+        "Supply present day",
+        "Display today's month",
+        "Offer today's year",
+        "Present present date",
+        "Fetch current month",
+        "Access present year",
+        "Retrieve today's day",
+        "Share current month",
+        "Give today's day",
+        "Provide current day",
+        "Display present year",
+        "Supply present month",
+        "Present today's day",
+        "Get present year",
+        "Show present date",
+        "Offer current day",
+        "Retrieve present year",
+        "Access current day",
+        "Show current year",
+        "Give present day",
+    ]
+
+
+
+    }
+
+    for key, value in intention_desc["Calculator"].items():
+        intention_desc[key] = value
+
+    for key, value in intention_desc.items():
+        if isinstance(value, list):
+            # Erase duplicates
+            intention_desc[key] = list(set(value))
+
+
 if REMOVE_CALCULATOR:
     tool_name_alternatives["Calculator"] = {}
     tool_desc["Calculator"] = {}
@@ -1406,13 +3718,69 @@ for key, value in tool_desc["Calculator"].items():
 
 for key, value in tool_name_alternatives.items():
     if isinstance(value, list):
-        # Transform to set
+        # Erase duplicates
         tool_name_alternatives[key] = list(set(value))
 
 for key, value in tool_desc.items():
     if isinstance(value, list):
-        # Transform to set
+        # Erase duplicates
         tool_desc[key] = list(set(value))
+
+
+
+CALC_SUBSETS = list(tool_name_alternatives["Calculator"].keys())
+TOOL_NAME_COUNT = {key:len(value) for key, value in tool_name_alternatives.items() if key != "Calculator"}
+DISTRACTOR_TOOLS = [key for key in tool_name_alternatives if key not in ["Calculator", "Calendar", "WikiSearch"] + CALC_SUBSETS]
+
+cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache/"
+
+if MODEL_NAME == "GPT2":
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
+elif MODEL_NAME == "GPTJ":
+    from transformers import AutoTokenizer, AutoModelForCausalLM
+    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", truncate=True, max_length=270, cache_dir=cache_dir)
+elif MODEL_NAME == "LLAMA2":
+    from transformers import LlamaTokenizer, LlamaForCausalLM, LlamaConfig
+    tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf", cache_dir=cache_dir,
+                                        token= "***REMOVED***")
+
+
+
+tokenizer.pad_token = tokenizer.eos_token
+
+if NO_TOKEN_OPTION == "":
+    tokenizer.add_tokens([TOOL_START_TOKEN, TOOL_END_TOKEN])
+    tokenizer.pad_token = tokenizer.eos_token
+
+
+if METHOD_B:
+    tokenizer.add_tokens(["[ARGS]"])
+
+    arg_token_id = len(tokenizer) - 1
+    def split_on_arg(text):
+        # Text is a tokenized tensor of the text. We want to split on the token with id tokenizer.encode("[ARGS]")[0]
+        # We return a tuple of the text before the first occurence of the token, and the text after the token
+        # If the token is not present, we return the text, None
+        if arg_token_id in text:
+            try:
+                index = torch.where(text == arg_token_id)[0].item()
+            except:
+                print(text)
+                print(arg_token_id)
+                print(torch.where(text == arg_token_id))
+                raise ValueError
+            return text[:index], text[index+1:]
+        else:
+            return text, None
+
+    # Tokenize the alternative names for the Calculator subtypes, the calendar, and the wikisearch
+    for key, value in tool_name_alternatives.items():
+        if key in ["Calendar", "WikiSearch"] + CALC_SUBSETS:
+            tool_name_alternatives[key] = [long_tensor(tokenizer.encode(name)) for name in value]
+
+    for key, value in intention_desc.items():
+        if key in ["Calendar", "WikiSearch"] + CALC_SUBSETS:
+            intention_desc[key] = [split_on_arg(long_tensor(tokenizer.encode(name + "|"))) for name in value]
 
 def filter_all_caps(name_dict):
     pass
@@ -1429,17 +3797,6 @@ def filter_all_caps(name_dict):
 # Calendar:     5899         7927
 # WikiSearch:   10290        10290
 
-cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache/"
-MODEL_NAME = "GPTJ"
-DEVICE = "cuda"
-if MODEL_NAME == "GPT2":
-    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
-else:
-    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", truncate=True, max_length=270, cache_dir=cache_dir)
-
-
-tokenizer.pad_token = tokenizer.eos_token
-
 
 def perplexity(dataset):
     # Dataset is a tuple of predictions and labels
@@ -1449,7 +3806,7 @@ def perplexity(dataset):
 
     for pred, lab in zip(dataset):
         examples += 1
-        loss_fct = torch.nn.functional.cross_entropy(pred.reshape(-1, pred.shape[-1]), lab.view(-1), reduction='sum')
+        loss_fct = torch.nn.functional.cross_entropy(pred.reshape(-1, pred.shape[-1]), lab.reshape(-1), reduction='sum')
 
         average_perplexity += torch.exp(loss_fct)
 
@@ -1520,7 +3877,7 @@ def come_as_you_are_collate_fn(batch):
     texts = pad_sequence(texts, padding_value=PAD_ID)
 
     token_types = list(map(int_tensor, token_types))
-    masks = list(map(is_not_response, token_types))
+    masks = list(map(method_a_masker, token_types))
     masks = pad_sequence(masks, padding_value=0)
 
     for text, mask in zip(texts, masks):
@@ -1530,14 +3887,10 @@ def come_as_you_are_collate_fn(batch):
 
 AVAILABLE_TOOLS_PROMPT = "These are the available tools: \n[TOOLS].\n\n"
 AVAILABLE_RANGE = [1,4]
-CALC_SUBSETS = list(tool_name_alternatives["Calculator"].keys())
-TOOL_NAME_COUNT = {key:len(value) for key, value in tool_name_alternatives.items() if key != "Calculator"}
-DISTRACTOR_TOOLS = [key for key in tool_name_alternatives if key not in ["Calculator", "Calendar", "WikiSearch"]]
 print(f"Distractors: {DISTRACTOR_TOOLS}")
 #TOOL_NAME_COUNT["Calculator"] = sum(len(tool_name_alternatives["Calculator"].values()))
 DESC_CHANCE = 1
 PROMPT_REMOVAL_P = 0.0
-SHUFFLE = False
 
 @beartype
 def choose(tools:List[str])->str:
@@ -1583,15 +3936,14 @@ def random_tool_descriptor(main_tool:str, calc_sub=None)->Tuple[str,str]:
         if random.random() < DESC_CHANCE:
             rand_name = f"{rand_name} ({random.choice(tool_desc[base_name])})"
         tools.add(rand_name)
-
+    
+    tools = list(tools)
+    random.shuffle(tools)
     pretty_tools = []
     for tool in tools:
         pretty_tools.append(f"  - {tool}")
 
     return "\n".join(pretty_tools), main_name
-
-long_tensor = partial(torch.tensor, dtype=torch.long, device=DEVICE)
-int_tensor = partial(torch.tensor, dtype=torch.long, device=DEVICE)
 
 eval_collator = DataCollatorWithPadding(tokenizer)
     
@@ -1640,15 +3992,13 @@ def change_name_collate_fn(batch):
     texts = pad_sequence(texts, padding_value=PAD_ID)
 
     merged_token_types = list(map(int_tensor, merged_token_types))
-    masks = list(map(is_not_response, merged_token_types))
+    masks = list(map(method_a_masker, merged_token_types))
     masks = pad_sequence(masks, padding_value=0)
 
     for text, mask in zip(texts, masks):
         assert text.shape == mask.shape, f"Shapes dont match: {text.shape} != {mask.shape}"
 
     if ARG_TRAINING:
-        print(type(token_types))
-        print(type(token_types[3]))
         resp_indexes = list(map(lambda token_type: token_type.index(6), token_types[3]))
         end_texts, token_types[3] = zip(*map(lambda text, token_type, idx: (text[:idx], token_type[:idx]), end_texts, token_types[3], resp_indexes))
         arg_texts = list(map(add_4, zip(start_texts, main_tools, end_texts, strict=True)))
@@ -1661,13 +4011,89 @@ def change_name_collate_fn(batch):
         arg_texts = pad_sequence(arg_texts, padding_value=PAD_ID)
 
         arg_token_types = list(map(int_tensor, arg_token_types))
-        arg_masks = list(map(is_arg, arg_token_types))
+        arg_masks = list(map(arg_selection_masker, arg_token_types))
         arg_masks = pad_sequence(arg_masks, padding_value=0)
 
         for text, mask in zip(arg_texts, arg_masks):
             assert text.shape == mask.shape, f"Shapes dont match: {text.shape} != {mask.shape}"
 
         return (texts, arg_texts), (masks, arg_masks)
+
+    return texts, masks
+
+def random_tool_name_intention(tool_name, args, calc_sub):
+
+    main_tool = tool_name
+    if tool_name == "Calculator":
+        if calc_sub is not None:
+            if calc_sub in ["mult_divide", "add_subtract", "mix"]: 
+                opts = ["mix"]
+            else:
+                opts = [calc_sub, "mix"]
+            main_tool = choose(opts)
+        else:
+            main_tool = choose(CALC_SUBSETS)
+
+    random_name = random.choice(tool_name_alternatives[main_tool])
+    random_intention = random.choice(intention_desc[main_tool]) 
+
+    if random_intention[1] != None: 
+        intention_list = [random_intention[0], args, random_intention[1]]
+    else:
+        intention_list = [random_intention[0]]
+
+    random_intention = torch.cat(intention_list)
+    return random_name, random_intention
+
+
+def method_2_collate_fn(batch):
+    # Here we have 4 token types also:
+    # - start text
+    # - tool intention
+    # - main tool
+    # - end text
+    # We have removed the prompts but added the tool intentions
+ 
+    texts, data_token_types, tool_names, calc_subtypes = zip(*batch, strict=True)
+
+    for text, mask in zip(texts, data_token_types):
+        assert len(text) == len(mask), f"Shapes dont match: {len(text)} != {len(mask)}"
+
+    token_types = [None,]*4
+
+    def arg_index(text):
+        try:
+            return text.index(4)
+        except ValueError:
+            return text.index(5)
+    tensor_out_of_list = lambda tuple_of_lists: int_tensor([item for sublist in tuple_of_lists for item in sublist])
+
+    name_idxs = map(lambda token_type: token_type.index(2), data_token_types)
+    parenthesis_idxs = map(lambda token_type: token_type.index(3), data_token_types)
+    arg_start = map(lambda token_type: arg_index(token_type), data_token_types)
+    arg_end = map(lambda token_type: token_type.index(5), data_token_types)
+    args = list(map(lambda text, start, end: long_tensor(text[start:end]), texts, arg_start, arg_end))
+
+    start_texts, token_types[0] = zip(*map(lambda text, token_type, idx: (long_tensor(text[:idx]), long_tensor(token_type[:idx])), texts, data_token_types, name_idxs))
+    end_texts, token_types[3] = zip(*map(lambda text, token_type, idx: (long_tensor(text[idx:]), long_tensor(token_type[idx:])), texts, data_token_types, parenthesis_idxs))
+
+    for s_text, s_mask, e_text, e_mask in zip(start_texts, token_types[0], end_texts, token_types[3]):
+        assert len(s_text) == len(s_mask), f"Shapes dont match: {len(s_text)} != {len(s_mask)}"
+        assert len(e_text) == len(e_mask), f"Shapes dont match: {len(e_text)} != {len(e_mask)}"
+
+    tool_name, tool_intention = zip(*map(random_tool_name_intention, tool_names, args, calc_subtypes), strict=True)
+    processed_texts = list(map(torch.cat, zip(start_texts, tool_intention, tool_name, end_texts, strict=True)))
+
+    token_types[1] = list(map(lambda intention: long_tensor(torch.ones(intention.shape)), tool_intention))
+    token_types[2] = list(map(lambda tool: long_tensor(torch.ones(tool.shape)*2), tool_name))  
+    merged_token_types = list(map(tensor_out_of_list, zip(*token_types, strict=True)))
+
+    for text, mask in zip(processed_texts, merged_token_types):
+        assert text.shape == mask.shape, f"Shapes dont match: {text.shape} != {mask.shape}"
+
+    texts = pad_sequence(processed_texts, padding_value=PAD_ID)
+    masks = pad_sequence(merged_token_types, padding_value = 7)
+    masks = method_b_masker(masks)
 
     return texts, masks
 
@@ -1730,13 +4156,12 @@ class MyTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 
-train_data_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/train/curated/GPTJ_med_set/"
+train_data_dir = f"/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/train/curated/{MODEL_NAME}_small2/"
 train_files = [file for file in os.listdir(train_data_dir) if file.endswith(".csv")]
-train_files = ["train_short.csv"]
+train_files = [f"train_short{NO_TOKEN_OPTION}.csv"]
 raw_train_files = [f"{file[:-4]}_texts.csv" for file in train_files]
 #train_files = ["train3_tagged.csv"]
 # If raw is provided as a command line argument, make it true:
-RAW = "raw" in sys.argv
 
 INT_COLUMNS = ['length', 'nlines', 'original_nlines', 'original_length', 'duplicity_ranking_tool', 'duplicity_ranking_global']
 FLOAT_COLUMNS = ['position', 'loss_improvement', 'language_score', 'perplexity', "relevance"]
@@ -1744,22 +4169,12 @@ FLOAT_COLUMNS = ['position', 'loss_improvement', 'language_score', 'perplexity',
 train_columns = []
 if not RAW:
 
-    train_df = pd.read_csv(os.path.join(train_data_dir, train_files[0]))
+    train_dataset = pd.read_csv(os.path.join(train_data_dir, train_files[0]))
 
     if REMOVE_CALCULATOR:
-        train_df = train_df[train_df["tool_name"] != "Calculator"].reset_index(drop=True)
-    # Read first line in train file:
-    with open(os.path.join(train_data_dir, train_files[0]), "r") as f:
-        train_header = f.readline()
-        train_columns = train_header.strip().split(",")
+        train_dataset = train_dataset[train_dataset["tool_name"] != "Calculator"].reset_index(drop=True)
 
-
-    train_df = pd.read_csv(os.path.join(train_data_dir, train_files[0]))
-
-    if REMOVE_CALCULATOR:
-        train_df = train_df[train_df["tool_name"] != "Calculator"].reset_index(drop=True)
-
-    train_dataset = Dataset.from_pandas(train_df)
+    train_dataset = Dataset.from_pandas(train_dataset)
 
     print("Loaded dataset")
 
@@ -1781,13 +4196,7 @@ else:
 
 
 
-TOOL_START_TOKEN = "<TOOL>"
-TOOL_END_TOKEN = "</TOOL>" 
-
-if MODEL_NAME == "GPTJ":
-    TOOL_START_TOKEN = " " + TOOL_START_TOKEN
-
-TRAIN_NAME = "medd" # "increasing_relevance_2" # "no_duplicates_2"
+TRAIN_NAME = "small2-arg" # "increasing_relevance_2" # "no_duplicates_2"
 
 training_args = TrainingArguments(
     output_dir="./results/test", # The output directory
@@ -1798,7 +4207,7 @@ training_args = TrainingArguments(
     #eval_steps = 10000, # Number of update steps between two evaluations.
     #evaluation_strategy = "steps",
     save_steps=500, # after # steps model is saved
-    warmup_steps=40,# number of warmup steps for learning rate scheduler
+    warmup_steps=40, # number of warmup steps for learning rate scheduler
     learning_rate=1e-5,
     dataloader_pin_memory=False,
     do_train=True,
@@ -1810,7 +4219,7 @@ training_args = TrainingArguments(
 
 
 
-def load_model(new_tokens = True):
+def load_model(new_tokens = NO_TOKEN_OPTION == ""):
     if MODEL_NAME == "GPT2":
         model = GPT2LMHeadModel.from_pretrained("gpt2", cache_dir=cache_dir)
     elif MODEL_NAME == "GPTJ":
@@ -1821,11 +4230,17 @@ def load_model(new_tokens = True):
             low_cpu_mem_usage=True,          # CANT HANDLE DEEPSPEED ZERO 3
             cache_dir=cache_dir 
         ).cuda()
+    elif MODEL_NAME == "LLAMA2":
+        config = LlamaConfig.from_pretrained("meta-llama/Llama-2-7b-hf", 
+                                             padding_idx=tokenizer.pad_token_id)
+        model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf", cache_dir=cache_dir,
+                token="***REMOVED***",
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True,
+                config=config,)
 
     if new_tokens:
-        tokenizer.add_tokens([TOOL_START_TOKEN, TOOL_END_TOKEN])
-        tokenizer.pad_token = tokenizer.eos_token
-        model.resize_token_embeddings(len(tokenizer))
+        model.resize_token_embeddings(len(tokenizer) - METHOD_B) # If method B, we have added the practical [ARGS] token
         print(f"Len tokenizer: {len(tokenizer)}")
 
     unfrozen_count = 0
@@ -1834,8 +4249,9 @@ def load_model(new_tokens = True):
     total_size = 0
     FROZEN_LAYERS = []
     TRAINED_LAYERS = []
-    for i in range(0, 25):
-        FROZEN_LAYERS += GPTJ_LAYERS[f"Layer {i}"]
+    for i in range(0, 25 if MODEL_NAME == "GPTJ" else 28):
+        FROZEN_LAYERS += MODEL_LAYERS[f"Layer {i}"]
+    
 
     # Freeze some layers in the architecture
     for name, param in model.named_parameters():
@@ -1856,8 +4272,9 @@ def load_model(new_tokens = True):
 
 
 DEBUG = True
-is_not_response = partial(torch.isin, test_elements=int_tensor([0,1,2,3,8]))
-is_arg = partial(torch.isin, test_elements=int_tensor([4,5]))
+method_a_masker = partial(torch.isin, test_elements=int_tensor([0,1,2,3,8]))
+arg_selection_masker = partial(torch.isin, test_elements=int_tensor([4,5]))
+method_b_masker = partial(torch.isin, test_elements=int_tensor([0,1,4,5,8]))
 PAD_ID = tokenizer.pad_token_id
 
 
@@ -1885,7 +4302,13 @@ def main():
     global raw_dataset, train_dataset
 
     if not RAW:
-        model = load_model(new_tokens=True)
+        model = load_model(new_tokens= NO_TOKEN_OPTION == "")
+
+        print("Loaded model")
+
+        if LORA:
+            model = get_peft_model(model, peft_config)
+            model.print_trainable_parameters()
 
         train_dataset = ToolDataset(train_dataset,tokenizer) 
 
@@ -1903,7 +4326,7 @@ def main():
             model=model, # the instantiated 🤗 Transformers model to be trained
             args=training_args, # training arguments, defined above
             train_dataset=train_dataset, # training dataset
-            data_collator = change_name_collate_fn,
+            data_collator = method_2_collate_fn if METHOD_B else change_name_collate_fn,
         )
 
         print("GONNA TRAIN")
@@ -1929,9 +4352,7 @@ def main():
             #tokenizer=tokenizer,
             args=training_args, # training arguments, defined above
             train_dataset=raw_dataset, # training dataset
-            eval_dataset=val_dataset, # evaluation dataset
             data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
-            compute_metrics=perplexity,
         )
 
         print("GONNA TRAIN")

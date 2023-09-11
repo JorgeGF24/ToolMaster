@@ -16,7 +16,7 @@ echo $PYTHONPATH
 # Datasets separated by ", ". 
 # Datasets: "test, asdiv, gms8k-easy, gms8k-hard, triviaQA"
 # Models: "AY", "DX", "DX-2", "A basic 0-shot", "A basic 0-shot-b", "A basic 1-shot"" ", DX, DX-2, A basic 0-shot, A basic 0-shot-b, A basic 1-shot
-python eval_benchmark.py "asdiv, triviaQA-small" "DZ-5.2-COT" "$1" # "test, asdiv, gms8k-easy, triviaQA" "DX, DX-2" "$1"
+python eval_benchmark.py "ASDiv-full, triviaQA" "huge-1, huge-1-high-k" "$1"  # "test, asdiv, gms8k-easy, triviaQA" "DX, DX-2" "$1"
 /usr/bin/nvidia-smi
 uptime
 duration=$SECONDS

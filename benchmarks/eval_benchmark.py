@@ -17,9 +17,8 @@ import re
 import traceback
 
 import torch
-from tools import Calculator, calc_parse, WikiSearch, wiki_parse, Calendar, calend_parse
+from tools import Calculator, calc_parse, WikiSearch, wiki_parse, Calendar, calend_parse, GPT3Wiki
 
-from transformers import AutoTokenizer, AutoModelForCausalLM, GPT2Config, GPT2LMHeadModel, GPTJConfig, LlamaTokenizer, LlamaConfig, LlamaForCausalLM
 from model_training.models.toolmaster import ToolMaster
 
 from functools import partial
@@ -55,51 +54,9 @@ Calculator = partial(Calculator, inference=True)
 cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache"
 
 TOOL_DOCUMENTATION = {
-    
+
 "Calculator": {
-    "tool_explanation":"""The calculator tool computes arithmetic expressions. You can call the API by writing "<TOOL>Calculator|expression</TOOL>" where "expression" is the expression to be computed. Here are some examples of its usage:
-Example 1: Last year we collected 237342 apples, double of what we collected this year: <TOOL>Calculator|237342/2→ 118671</TOOL> 118671.
-Example 2: The number in the next term is 18 + 12 x 3 = <TOOL>Calculator|18+(12*3)→ 54</TOOL> 54.
-Example 3: A total of 252 matches were played, and 723 goals were scored (an average of <TOOL>Calculator|723/252→ 2.87</TOOL> 2.87 per match). This is twenty goals more than the <TOOL>Calculator|723-20→703</TOOL> 703 goals last year.
-Example 4: I went to Paris in 1994 and stayed there until 2011, so in total, it was <TOOL>Calculator|2011-1994→ 17</TOOL> 17 years.""",
-    "few_shot_examples":[
-"""Question: Paris has 3 times the number of inhabitants as Madrid. Madrid has 1 million more inhabitants than Barcelona. Barcelona has 1.6 million inhabitants. How many inhabitants does Paris have?
-Let's think step by step: Madrid has 1 million more inhabitants than Barcelona so it has <TOOL>Calculator|1600000+1000000→ 2600000</TOOL> 2600000 inhabitants. Therefore, as Paris has three times Madrid's population, Paris has <TOOL>Calculator|2600000*3→ 7800000</TOOL> 7800000 inhabitants.
-Answer: 7800000""",
-    ],
-    "example_answer": "42"
-},
-
-"Calendar": {
-    "tool_explanation":"""The calendar tool returns the current date. It can help you get information required to complete the text, such as the temporal context of a person, action or general information. You can call the API by writing "<TOOL>Calendar|</TOOL>". Here are some examples of its usage:
-Example 1: Today is the first <TOOL>Calendar| → Today is Friday, 01/01/2019</TOOL> Friday of the year.
-Example 2: The president of the United States is <TOOL>Calendar| → Today is Tuesday, 11/02/2007</TOOL> George W. Bush.""",
-    "few_shot_examples":[
-"""Question: How many days till the first of september?
-Let's think step by step: Today is <TOOL>Calendar| → Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator|31-21→ 10</TOOL> 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
-Answer: 11"""
-        ],
-    "example_answer": "2017"
-},
-
-"WikiSearch": {
-    "tool_explanation":"""The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "<TOOL>WikiSearch|term→</TOOL>" where "term" is the search term you want to look up. Here are some examples of API calls:
-Example 1: The colors on the flag of Ghana have the following meanings: red is for <TOOL>WikiSearch|Ghana flag red meaning→ The red from Ghana's flag replesents the blood of martyrs</TOOL> the blood of martyrs, green for forests, and gold for mineral wealth.
-Example 2: But what are the risks during production of nanomaterials? <TOOL>WikiSearch|nanomaterial production risks→ Evidence of lung deterioration</TOOL> Some nanomaterials may give rise to various kinds of lung damage.
-Example 3: Metformin is the first-line drug for <TOOL>WikiSearch|Metformin first-line drug→ Metformin is used by diabetic patients</TOOL> patients with type 2 diabetes and obesity.""",
-    "few_shot_examples":[
-"""Question: What year was the prime minister of England that surved during WW2 born?
-Let's think step by step: The prime minister of England that surved during WW2 was <TOOL>WikiSearch|prime minister of England during WW2→ Winston Churchill</TOOL> Winston Churchill. He was born in <TOOL>WikiSearch|Winston Churchill birth year→ 1874</TOOL> 1874.
-Answer: 1874"""
-    ],
-    "example_answer": "George Washington"
-},
-}
-
-
-TOOL_DOCUMENTATION = {
-"Calculator": {
-    "tool_explanation":"""The calculator tool computes arithmetic expressions. You can call the API by writing "<TOOL>Calculator(expression=</TOOL>" where "expression" is the expression to be computed. Here are some examples of its usage:
+    "tool_explanation":"""The calculator tool computes arithmetic expressions. You can call the API by writing "<TOOL>Calculator(expression→</TOOL>" where "expression" is the expression to be computed. Here are some examples of its usage:
 Example 1: Last year we collected 237342 apples, double of what we collected this year: <TOOL>Calculator(237342/2)→ 118671</TOOL> 118671.
 Example 2: The number in the next term is 18 + 12 x 3 = <TOOL>Calculator(18+(12*3))→ 54</TOOL> 54.
 Example 3: A total of 252 matches were played, and 723 goals were scored (an average of <TOOL>Calculator(723/252)→ 2.87</TOOL> 2.87 per match). This is twenty goals more than the <TOOL>Calculator(723-20)→703</TOOL> 703 goals last year.
@@ -138,13 +95,73 @@ Example 1: The colors on the flag of Ghana have the following meanings: red is f
 Example 2: But what are the risks during production of nanomaterials? <TOOL>WikiSearch(nanomaterial production risks)→ Evidence of lung deterioration</TOOL> Some nanomaterials may give rise to various kinds of lung damage.
 Example 3: Metformin is the first-line drug for <TOOL>WikiSearch(Metformin first-line drug)→ Metformin is used by diabetic patients</TOOL> patients with type 2 diabetes and obesity.""",
     "few_shot_examples":[
-"""Question: What year was the prime minister of England that surved during WW2 born?
-Let's think step by step: The prime minister of England that surved during WW2 was <TOOL>WikiSearch(prime minister of England during WW2)→ Winston Churchill</TOOL> Winston Churchill. He was born in <TOOL>WikiSearch(Winston Churchill birth year)→ 1874</TOOL> 1874.
+"""Question: What year was the prime minister of England that served during WW2 born?
+Let's think step by step: The prime minister of England that served during WW2 was <TOOL>WikiSearch(prime minister England WW2)→ Winston Churchill</TOOL> Winston Churchill. He was born in <TOOL>WikiSearch(Winston Churchill born)→ 1874</TOOL> 1874.
 Answer: 1874"""
     ],
     "example_answer": "George Washington"
 },
 }
+
+
+TOOL_DOCUMENTATION = {
+    
+"Calculator": {
+    "tool_explanation":"""The calculator tool computes arithmetic expressions. You can call the API by writing "<TOOL>Calculator|expression→</TOOL>" where "expression" is the expression to be computed. Here are some examples of its usage:
+Example 1: Last year we collected 237342 apples, double of what we collected this year: <TOOL>Calculator|237342/2→ 118671</TOOL> 118671.
+Example 2: The number in the next term is 18 + 12 x 3 = <TOOL>Calculator|18+(12*3)→ 54</TOOL> 54.
+Example 3: A total of 252 matches were played, and 723 goals were scored (an average of <TOOL>Calculator|723/252→ 2.87</TOOL> 2.87 per match). This is twenty goals more than the <TOOL>Calculator|723-20→703</TOOL> 703 goals last year.
+Example 4: I went to Paris in 1994 and stayed there until 2011, so in total, it was <TOOL>Calculator|2011-1994→ 17</TOOL> 17 years.""",
+    "few_shot_examples":[
+"""Question: Paris has 3 times the number of inhabitants as Madrid, which has 1 million more inhabitants than Barcelona (1.6m inhabitants). How many inhabitants does Paris have?
+Let's think step by step: Madrid has 1 million more inhabitants than Barcelona so it has <TOOL>Calculator|1.6+1→ 2.6</TOOL> 2.6m inhabitants. Therefore, as Paris has three times Madrid's population, Paris has <TOOL>Calculator|2.6*3→ 7.8</TOOL> 7.8m inhabitants.
+Answer: 7.8 million""",
+    ],
+    "example_answer": "42"
+},
+
+"Calendar": {
+    "tool_explanation":"""The calendar tool returns the current date. It can help you get information required to complete the text, such as the temporal context of a person, action or general information. You can call the API by writing "<TOOL>Calendar|</TOOL>". Here are some examples of its usage:
+Example 1: Today is the first <TOOL>Calendar| → Today is Friday, 01/01/2019</TOOL> Friday of the year.
+Example 2: The president of the United States is <TOOL>Calendar| → Today is Tuesday, 11/02/2007</TOOL> George W. Bush.""",
+    "few_shot_examples":[
+"""Question: How many days till the first of september?
+Let's think step by step: Today is <TOOL>Calendar| → Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator|31-21→ 10</TOOL> 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
+Answer: 11"""
+        ],
+    "example_answer": "2017"
+},
+
+"WikiSearch": {
+    "tool_explanation":"""The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "<TOOL>WikiSearch|term→</TOOL>" where "term" is the search term you want to look up. Here are some examples of API calls:
+Example 1: The colors on the flag of Ghana have the following meanings: red is for <TOOL>WikiSearch|Ghana flag red→ The red from Ghana's flag replesents the blood of martyrs</TOOL> the blood of martyrs, green for forests, and gold for mineral wealth.
+Example 2: But what are the risks during production of nanomaterials? <TOOL>WikiSearch|nanomaterial production risk→ Evidence of lung deterioration</TOOL> Some nanomaterials may give rise to various kinds of lung damage.
+Example 3: Metformin is the first-line drug for <TOOL>WikiSearch|Metformin drug use→ Metformin is used by diabetic patients</TOOL> patients with type 2 diabetes and obesity.
+Example 4: The actress Jennifer Lawrence acted alongside Leonardo di Caprio in the movie <TOOL>WikiSearch|Jennifer Lawrence di Caprio movie→ They acted together in Don't Look up</TOOL> Don't Look Up.""",
+    "few_shot_examples":[
+"""Question: What year was the prime minister of England that served during WW2 born?
+Let's think step by step: The prime minister of England that served during WW2 was <TOOL>WikiSearch|prime minister England WW2 born→ Winston Churchill</TOOL> Winston Churchill. He was born in <TOOL>WikiSearch|Winston Churchill born→ 1874</TOOL> 1874.
+Answer: 1874"""
+    ],
+    "example_answer": "George Washington"
+},
+
+"GPT3Wiki": {
+    "tool_explanation":"""The GPT3Wiki tool replies to user queries. It can reply to specific questions, or general information on a query. You can do so by writing "<TOOL>GPT3Wiki|query→</TOOL>" where "query" is the query you want to look up. Here are some examples of API calls:
+Example 1: The colors on the flag of Ghana have the following meanings: red is for <TOOL>GPT3Wiki|meaning red Ghana flag→ The red from Ghana's flag replesents the blood of martyrs</TOOL> the blood of martyrs, green for forests, and gold for mineral wealth.
+Example 2: But what are the risks during production of nanomaterials? <TOOL>GPT3Wiki|nanomaterial production risk→ Evidence of lung deterioration</TOOL> Some nanomaterials may give rise to various kinds of lung damage.
+Example 3: Metformin is the first-line drug for <TOOL>GPT3Wiki|Metformin use→ Metformin is used by diabetic patients</TOOL> patients with type 2 diabetes and obesity.
+Example 4: The actress Jennifer Lawrence acted alongside Leonardo di Caprio in the movie <TOOL>GPT3Wiki|What movie did Jennifer Lawrence and Leonardo di Caprio act together→ They acted together in Don't Look up</TOOL> Don't Look Up.""",
+    "few_shot_examples":[
+"""Question: What year was the prime minister of England that served during WW2 born?
+Let's think step by step: The prime minister of England that served during WW2 was <TOOL>GPT3Wiki|prime minister England WW2→ Winston Churchill</TOOL> Winston Churchill. He was born in <TOOL>GPT3Wiki|Winston Churchill born→ 1874</TOOL> 1874.
+Answer: 1874"""
+    ],
+    "example_answer": "George Washington"
+}
+}
+
+
 
 
 
@@ -156,11 +173,11 @@ Answer: 1874"""
 # 5. Short description: Optional[str] - A short description of the tool
 
 MULTI_TOOL_USE_EXAMPLE = """Question: How many days till the first of september?
-Let's think step by step: Today is <TOOL>Calendar| → Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator|31-21→ 10] 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
+Let's think step by step: Today is <TOOL>Calendar| → Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator|31-21→ 10</TOOL> 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
 Answer: 11"""
 
 MULTI_TOOL_USE_EXAMPLE = """Question: How many days till the first of september?
-Let's think step by step: Today is <TOOL>Calendar( )→ Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator(31-21)→ 10] 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
+Let's think step by step: Today is <TOOL>Calendar( )→ Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator(31-21)→ 10</TOOL> 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
 Answer: 11"""
 
 
@@ -184,7 +201,7 @@ FREE_GENERATION_PROMPT = {
 
 Question: [PROMPT]
 """,
-"0.5 math": """Answer the following questions that assess your numerical skills.
+"0.5 math": """ Answer the following questions that asses your ability to calculate simple math problems.
 
 Question: [PROMPT]
 """,
@@ -205,7 +222,7 @@ Question: [PROMPT]
 Let's think step by step: """,
 ################## TASK EXPLAN #################################   0 1   basic_1-shot
 
-"0 1 math": """Answer the following questions that asses your numerical skills.
+"0 1 math": """Answer the following questions that asses your ability to calculate simple math problems.
 
 Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
 She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The answer is 15.
@@ -213,7 +230,7 @@ She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The ans
 Question: [PROMPT]
 """,
 
-"0 1 wiki":"""Answer the following questions that evaluates your general knowledge.
+"0 1 wiki":"""Answer the following questions that evaluate your general knowledge.
 
 Question: What country is the Burj Khalifa in?
 Answer: It is in Dubai, so in the answer is United Arab Emirates.
@@ -221,18 +238,29 @@ Answer: It is in Dubai, so in the answer is United Arab Emirates.
 Question: [PROMPT]
 """,
 
-"0 1+ math": """Answer the following questions that asses your numerical skills.
+"0 1+ math": """Answer the following questions that asses your ability to calculate simple math problems.
 
-Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
-She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The answer is 15.
+Question: Paris has 3 times the number of inhabitants as Madrid, which has 1 million more inhabitants than Barcelona (1.6m inhabitants). How many inhabitants does Paris have?
+Answer: Madrid has 1 million more inhabitants than Barcelona so it has 1.6m + 1m = 2.6m inhabitants. Therefore, as Paris has three times Madrid's population, Paris has 2.6m*3 = 7.8m inhabitants. The answer is 7.8 million.
 
-Question: Initially, I had $106 in my account. I used half of it to buy a lamp. How much do I have left?
-Half of 106 is 53, so the answer is 53.
+Question: How many days till the first of september?
+Answer: Today is 21/08. There are 31 days in agust, so there are 31-21 = 10 days left of August. The first of september is the day after the 31st, so there are 11 days left. The answer is 11.
 
 Question: [PROMPT]
-""",
+Answer:""",
 
-"0 1b math": """Answer the following questions that asses your numerical skills.
+"0 1+ wiki": """Answer the following questions that evaluate your general knowledge.
+
+Question: How many days till the first of september?
+Answer: Today is 21/08. There are 31 days in agust, so there are 10 days left of August. The first of september is the day after the 31st, so there are 11 days left. The answer is 11.
+
+Question: What year was the prime minister of England that served during WW2 born?
+Answer: The prime minister of England that served during WW2 was Winston Churchill. He was born in 1874. The answer is 1874.
+
+Question: [PROMPT]
+Answer:""",
+
+"0 1b math": """Answer the following questions that asses your ability to calculate simple math problems.
 
 Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
 Answer: 15.
@@ -240,7 +268,7 @@ Answer: 15.
 Question: [PROMPT]
 """,
 
-"0 1b wiki":"""Answer the following questions that evaluates your general knowledge.
+"0 1b wiki":"""Answer the following questions that evaluate your general knowledge.
 
 Question: What country is the Burj Khalifa in?
 Answer: United Arab Emirates.
@@ -255,7 +283,7 @@ Question: [PROMPT]
 [TOOL_DOCUMENTATION]
 
 
-You can use the following tools: [AVAILABLE TOOLS]. Now, answer the following questions. When you find the answer, write "Answer:" on a new line followed by your answer. For example, if the answer is [ANSWER_EXAMPLE], write "Answer: [ANSWER_EXAMPLE]".
+You can use the following tools: [AVAILABLE TOOLS].. Now, answer the following questions. When you find the answer, write "Answer:" on a new line followed by your answer. For example, if the answer is [ANSWER_EXAMPLE], write "Answer: [ANSWER_EXAMPLE]".
 
 [FEW_SHOT_EXAMPLES]
 
@@ -267,7 +295,7 @@ Let's think step by step: """,
 [TOOL_DOCUMENTATION]
 
 
-Answer the following questions that assess your numerical skills.
+ Answer the following questions that asses your ability to calculate simple math problems.
 
 Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
 She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The answer is 15.
@@ -283,7 +311,7 @@ Question: [PROMPT]
 [TOOL_DOCUMENTATION]
 
 
-Answer the following questions that evaluates your general knowledge.
+Answer the following questions that evaluate your general knowledge.
 
 Question: How many eyes do Koalas have?
 Koalas are mammals, and mammals have 2 eyes. The answer is 2.
@@ -296,7 +324,7 @@ Question: [PROMPT]
 [TOOL_DOCUMENTATION]
 
 
-Answer the following questions that assess your numerical skills.
+ Answer the following questions that asses your ability to calculate simple math problems.
 
 Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
 Answer: 15.
@@ -309,7 +337,7 @@ Question: [PROMPT]
 [TOOL_DOCUMENTATION]
 
 
-Answer the following questions that evaluates your general knowledge.
+Answer the following questions that evaluate your general knowledge.
 
 Question: What country is the Burj Khalifa in?
 Answer: United Arab Emirates.
@@ -322,20 +350,48 @@ Question: [PROMPT]
 [TOOL_DOCUMENTATION]
 
 
-Answer the following questions that assess your numerical skills.
+ Answer the following questions that asses your ability to calculate simple math problems.
 
 Question: [PROMPT]
-""",
+Answer:""",
 
 "1.5 wiki": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the [TOOL_NAME] tool:
 
 [TOOL_DOCUMENTATION]
 
 
-Answer the following questions that evaluates your general knowledge.
+Answer the following questions that evaluate your general knowledge.
 
 Question: [PROMPT]
-""",
+Answer:""",
+
+"1 2 math": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the [TOOL_NAME] tool:
+[TOOL_DOCUMENTATION]
+
+ Answer the following questions that asses your ability to calculate simple math problems.
+
+Question: Paris has 3 times the number of inhabitants as Madrid, which has 1 million more inhabitants than Barcelona (1.6m inhabitants). How many inhabitants does Paris have?
+Answer: Madrid has 1 million more inhabitants than Barcelona so it has [Calculator|1.6+1→ 2.6] 2.6m inhabitants. Therefore, as Paris has three times Madrid's population, Paris has [Calculator|2.6*3→ 7.8] 7.8m inhabitants. The answer is 7.8 million.
+
+Question: How many days till the first of september?
+Answer: Today is [Calendar| → Today is Wednesday, 21/08/2023] Wednesday. There are 31 days in agust, so there are [Calculator|31-21→ 10] 10 days left of August. The first of september is the day after the 31st, so there are 11 days left. The answer is 11.
+
+Question: [PROMPT]
+Answer:""",
+
+"1 2 wiki": f"""You are a question answering model that can use external tools to answer questions. This is a demonstration of the [TOOL_NAME] tool:
+[TOOL_DOCUMENTATION]
+
+Answer the following questions that evaluate your general knowledge.
+
+Question: How many days till the first of september?
+Answer: Today is [Calendar| → Today is Wednesday, 21/08/2023] Wednesday. There are 31 days in agust, so there are [Calculator|31-21→ 10] 10 days left of August. The first of september is the day after the 31st, so there are 11 days left. The answer is 11.
+
+Question: What year was the prime minister of England that served during WW2 born?
+Answer: The prime minister of England that served during WW2 was [WikiSearch|prime minister England WW2→ Winston Churchill] Winston Churchill. He was born in [WikiSearch|Winston Churchill born→ 1874] 1874. The answer is 1874.
+
+Question: [PROMPT]
+Answer:""",
 
 ############ TOOL EXPLAN, ARG PROMPT #######################  1 2 TOOL_EXPLAN_SHORT
 
@@ -348,14 +404,21 @@ It can help you solve your current task. Now, complete the text below.
 
 ################# AVAILABLE TOOLS BARE ##############################  2  0  0  toolmaster-finetuned-bare
 "2 0 0":"""These are the available tools: 
-[AVAILABLE TOOLS]
+[AVAILABLE TOOLS].
 
-[PROMPT]
-Answer: """,
+Question: [PROMPT]
+Answer:""",
+
+################# AVAILABLE TOOLS BARE ##############################  2  0  0  toolmaster-finetuned-bare
+"2 00 0":"""These are the available tools: 
+[AVAILABLE TOOLS].
+
+[PROMPT] 
+Answer:""",
 
 ################# AVAILABLE TOOLS BARE ##############################  2  0  n   toolmaster-finetuned-few-shot
 "2 0 n":"""These are the available tools: 
-[AVAILABLE TOOLS]
+[AVAILABLE TOOLS].
 
 [FEW_SHOT_EXAMPLES]
 
@@ -364,8 +427,8 @@ Let's think step by step: """,
 
 
 #################### AVAILABLE TOOLS, TASK  ########################  2  1   toolmaster-finetuned-task
-"2 1":"""These are the available tools:
-[AVAILABLE TOOLS]
+"2 1":"""These are the available tools: 
+[AVAILABLE TOOLS].
 
 Now, answer the following questions. When you find the answer, write \"Answer:\" followed by your answer. For example, if the answer is [ANSWER_EXAMPLE], write \"Answer: [ANSWER_EXAMPLE]\".
 
@@ -374,39 +437,107 @@ Now, answer the following questions. When you find the answer, write \"Answer:\"
 Question: [PROMPT]
 Let's think step by step: """,
 
+"2 0 2 math":"""These are the available tools: 
+[AVAILABLE TOOLS].
+
+Question: John has 78 dishes. Mary gives him 21 more. Sadly, one third of them break. How many dishes does John have left?
+Answer: John has 78+21 = <TOOL>Calculator|78+21→ 99.0</TOOL> dishes. One third of them break, so two thirds are left: <TOOL>Calculator|99*2/3→ 66.0</TOOL> 66. The answer is 66.
+
+Question: Paris has 3 times the number of inhabitants as Madrid, which has 1 million more inhabitants than Barcelona (1.6m inhabitants). How many inhabitants does Paris have?
+Answer: Madrid has 1 million more inhabitants than Barcelona so it has <TOOL>Calculator|1.6+1→ 2.6</TOOL> 2.6m inhabitants. Therefore, as Paris has three times Madrid's population, Paris has <TOOL>Calculator|2.6*3→ 7.8</TOOL> 7.8m inhabitants. The answer is 7.8 million.
+
+Question: How many days till the first of september?
+Answer: Today is <TOOL>Calendar| → Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL>Calculator|31-21→ 10</TOOL> 10 days left of August. The first of september is the day after the 31st, so there are 11 days left. The answer is 11.
+
+Question: [PROMPT]
+Answer:""",
+
+"2 0 2 wiki":"""These are the available tools: 
+[AVAILABLE TOOLS].
+
+Question: How many days till the first of september?
+Answer: Today is <TOOL>Calendar| → 21/08/2023</TOOL> 21/08. There are 31 days in agust, so there are <TOOL>Calculator|31-21→ 10</TOOL> 10 days left. The first of september is the day after the 31st, so there are 11 days left. The answer is 11.
+
+Question: What year was the prime minister of England that served during WW2 born?
+Answer: The prime minister of England that served during WW2 was <TOOL>WikiSearch|prime minister England WW2→ Winston Churchill</TOOL> Winston Churchill. He was born in <TOOL>WikiSearch|Winston Churchill born→ 1874</TOOL> 1874. The answer is 1874.
+
+Question: Who sang the song "I wish you were here"?
+Answer: The song "I wish you were here" was sung by <TOOL>WikiSearch|I wish you were here song→ Pink Floyd</TOOL> Pink Floyd. The answer is Pink Floyd.
+
+Question: [PROMPT]
+Answer:""",
+
+"2 1 math":"""These are the available tools: 
+[AVAILABLE TOOLS].
+
+Answer the following questions that asses your ability to calculate simple math problems.
+
+Question: [PROMPT]
+Answer:""",
+
+"2 1 wiki":"""These are the available tools: 
+[AVAILABLE TOOLS].
+
+Answer the following questions that evaluate your general knowledge.
+
+Question: [PROMPT]
+Answer:""",
+
 
 #################### AVAILABLE TOOLS, TASK  ########################  2  1   toolmaster-finetuned-task
 #Question: Mary had 23 apples. She gave 5 to John and 3 to Peter. How many apples does she have left?\nShe gave away a total of 5+3=8 apples, so she has 23-8=15 apples left. The answer is 15.
 #Question: Who is the guitarist of the band Queen?\nThe guitarist is Brian May. The answer is Brian May.
-"2 3 math":"""These are the available tools:
-[AVAILABLE TOOLS]
+"2 3 math":"""These are the available tools: 
+[AVAILABLE TOOLS].
 
-Answer the following questions that assess your numerical skills.
+ Answer the following questions that asses your ability to calculate simple math problems.
 
 Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
 She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The answer is 15.
 
-Question: Initially, I had $106 in my account. I used half of it to buy a lamp. How much do I have left?
-Half of 106 is 53, so the answer is 53.
+Question: Elsa and I have a total of $105. I have 4 times more dollars than her. How many dollars does Elsa have?
+Let Elsa have $x, so I have $4*x. We know that x+4x=105, so 5x=105 and x=105/5=21. The answer is 21.
+
+Question: John is putting apples in boxes of 6. He has 41 apples. How many boxes will he need?
+He will need 41/6 = 6.83 boxes, so he will fill 6 boxes and need one more for the left-over apples. The answer is 7.
 
 Question: [PROMPT]
 """,
 
-"2 3 wiki":"""These are the available tools:
-[AVAILABLE TOOLS]
+"2 3ddd wiki":"""These are the available tools: 
+[AVAILABLE TOOLS].
 
 Answer the following questions that evaluate your general knowledge.
 
-Question: How many eyes do Koalas have?
-Koalas are mammals, and mammals have 2 eyes. The answer is 2.
+Question: What is the loudest animal on Earth?
+The blue whale. 
+Answer: The loudest animal on Earth is the blue whale.
+
+Question: What year was the prime minister of England that served during WW2 born?
+During WW2, the English prime minister was Winston Churchill. He was born in 1874
+Answer: The prime minister of England that served during WW2 was born in 1874.
 
 Question: [PROMPT]
 """,
 
-"2 36 math":"""These are the available tools:
-[AVAILABLE TOOLS]
+"2 3 wiki":"""These are the available tools: 
+[AVAILABLE TOOLS].
 
-Answer the following questions that assess your numerical skills.
+Answer the following questions that evaluate your general knowledge.
+
+Question: What is the loudest animal on Earth?
+Answer: The loudest animal on Earth is the blue whale.
+
+Question: What year was the prime minister of England that served during WW2 born?
+Answer: Wiston Churchill served England during WW2 and he was born in 1874.
+
+Question: [PROMPT]
+Answer:""",
+
+"2 36 math":"""These are the available tools: 
+[AVAILABLE TOOLS].
+
+ Answer the following questions that asses your ability to calculate simple math problems.
 
 Question: Mary had 23 flowers. She gave 5 to John and 3 to Peter. How many flowers does she have left?
 She gave away a total of 5+3=8 flowers, so she has 23-8=15 flowers left. The answer is 15.
@@ -429,8 +560,8 @@ In total, it was 2011-1994= 17 years. The answer is 17.
 Question: [PROMPT]
 """,
 
-"2 36 wiki":"""These are the available tools:
-[AVAILABLE TOOLS]
+"2 36 wiki":"""These are the available tools: 
+[AVAILABLE TOOLS].
 
 Answer the following questions that evaluate your general knowledge.
 
@@ -449,12 +580,29 @@ The answer is patients with type 2 diabetes and obesity.
 Question: [PROMPT]
 """,
 
+"gms p":"""These are the available tools: 
+[AVAILABLE TOOLS].
+
+Answer the following difficult math questions.
+
+Question: My brother is half my age. In 10 years, he will be 3/4 of my age. How old am I?
+Answer: Let my age be x and my brother's y. Then, x*1/2 = y and (x+10)*3/4 = y+10. Solving this system we get [WolframAlphaCalculator| x*1/2 = y; (x+10)*3/4 = y+10 → x=10, y=5] that my age is 10 and my brother is 5. The answer is 10.
+
+Question: In a basket, there are 24 good oranges and rest are bad oranges. The ratio of good oranges to the bad oranges is 3:1.
+Answer: For each 3 good oranges there is 1 bad orange, so there are 24/3 = [WolframAlphaCalculator|24/3 → 8] 8 bad oranges. The answer is 8.
+
+Question: Charlie has 6 apples at the start of the day. He gives some to Bob, who had none, and Bob gives half of those to Alice. At the end of the day, Alice has 2 apples less than Charlie. How many apples did Bob get?
+Answer: We note that Alice and Bob have the same number of apples at the end of the day, as Bob gave half to Alice. Let x be the apples Alice and Bob have at the end of the day. We have a total of 6 apples, and Alice has x, Bob has x, and Charlie has x+2. Therefore, 6 = x + x + x+2, so x = [WolframAlphaCalculator|6 = x + x + x+2 → 1] 1. If Bob now has 1 apple after giving half of them, he got 1*2 = 2 apples from Charlie. The answer is 2.
+
+Question: [PROMPT]
+Answer:""",
+
 
 #################### AVAILABLE TOOLS, TASK  ########################  2  1   toolmaster-finetuned-task
-"2 3b":"""These are the available tools:
-[AVAILABLE TOOLS]
+"2 3b":"""These are the available tools: 
+[AVAILABLE TOOLS].
 
-The following questions are meant to asses your numerical skills. When you find an answer, write \"Answer:\" followed by your answer. For example, if the answer is [ANSWER_EXAMPLE], write \"Answer: [ANSWER_EXAMPLE]\".
+The following questions are meant to asses your ability to calculate simple math problems. When you find an answer, write \"Answer:\" followed by your answer. For example, if the answer is [ANSWER_EXAMPLE], write \"Answer: [ANSWER_EXAMPLE]\".
 
 [FEW_SHOT_EXAMPLES]
 
@@ -462,8 +610,6 @@ Question: [PROMPT]
 Let's think step by step: """,
 
 }
-
-relies_on_extraction = ["0 1", "1 1", "2 1"]
 
 def prepare_prompt(prompt_name, tool_name=None, few_shot_n=0):
     global FREE_GENERATION_PROMPT, TOOL_DOCUMENTATION, TOOL_SPECS
@@ -496,6 +642,7 @@ TOOL_SPECS = {
     "explanation_prompt": prepare_prompt("ARG_PROMPT", "Calculator"),
     "short_description": "can compute arithmetic expressions",
     "max_arg_length": 30,
+    "embedding": torch.tensor([0, 0, 1]),
 
 }, 
 "Calendar":{
@@ -505,15 +652,27 @@ TOOL_SPECS = {
     "explanation_prompt": prepare_prompt("ARG_PROMPT", "Calendar"),
     "short_description": "returns the current date",
     "max_arg_length": 1,
+    "embedding": torch.tensor([0, 1, 1]),
 
-}, "WikiSearch":{
+}, 
+"WikiSearch":{
     "name": "WikiSearch",
     "arg_parser": lambda x: [wiki_parse(x)],
     "tool": WikiSearch,
     "explanation_prompt": prepare_prompt("ARG_PROMPT", "WikiSearch"),
-    "short_description": "searches Wikipedia",
+    "short_description": "returns explanations on a subject",
     "max_arg_length": 20,
+    "embedding": torch.tensor([1, 0, 1]),
 }, 
+"GPT3Wiki":{
+    "name": "QATool",
+    "arg_parser": lambda x: [wiki_parse(x)],
+    "tool": GPT3Wiki,
+    "explanation_prompt": prepare_prompt("ARG_PROMPT", "GPT3Wiki"),
+    "short_description": "replies to general knowledge questions",
+    "max_arg_length": 20,
+    "embedding": torch.tensor([1, 0, 1]),
+},
 }
 
 
@@ -540,10 +699,18 @@ TRAINED_MODELS = {
     "GPTJ-mickey": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_mickey",
     "GPTJ-small-no-calc": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_small_no_calc",
     "GPTJ-small": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_small",
+    "GPTJ-small2": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_small2",
     "GPTJ-distracted": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_distracted",
     "GPTJ-med": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_med",
     "GPTJ-med-arg": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_med_arg",
+    "GPTJ-med-no-calc": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_med_no_calc",
+    "GPTJ-med-full": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_med_full",
+    "GPTJ-med-shuffle": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_med-shuffle",
+    "GPTJ-med-no-token": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_med_no_token2",
+    "GPTJ-med-no-token-no-calc": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_med_no_token_no_calc",
     "GPTJ-large": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_large",
+    "GPTJ-large-arg": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_large-arg",
+    "GPTJ-huge": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_huge",
 }
 
 
@@ -558,7 +725,9 @@ BENCHMARK_NAME = "gsm8k-easy"
 
 def load_GPTJ(path:str="EleutherAI/gpt-j-6B",
               new_tokens:List[str]=[],
+              peft_path:str=None,
               **kwargs):
+    from transformers import AutoTokenizer, AutoModelForCausalLM
     # Load the GPTJ model we will use to construct the Toolmaster model
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", cache_dir=cache_dir)
 
@@ -576,8 +745,12 @@ def load_GPTJ(path:str="EleutherAI/gpt-j-6B",
             torch_dtype=torch.float16,
             low_cpu_mem_usage=True, 
             #config=config, 
-            cache_dir=cache_dir, **kwargs).cuda()
+            cache_dir=cache_dir, **kwargs)
+    if peft_path is not None:
+        from peft import PeftModel
+        model = PeftModel.from_pretrained(model, peft_path)
 
+    model = model.to("cuda")
     model.eval()
     model.resize_token_embeddings(len(tokenizer))
 
@@ -585,6 +758,7 @@ def load_GPTJ(path:str="EleutherAI/gpt-j-6B",
 
 def load_LLAMA(path:str="meta-llama/Llama-2-7b-hf",
               new_tokens:List[str]=[],):
+        from transformers import LlamaTokenizer, LlamaConfig, LlamaForCausalLM
         
         kwargs = {cache_dir: cache_dir}
         if path == "meta-llama/Llama-2-7b-hf":
@@ -710,7 +884,20 @@ def create_config(
  
     return config
 
+def perplexity(dataset):
+    # Dataset is a tuple of predictions and labels
 
+    average_perplexity = 0
+    examples = 0
+
+    for pred, lab in zip(dataset):
+        examples += 1
+        loss_fct = torch.nn.functional.cross_entropy(pred.reshape(-1, pred.shape[-1]), lab.view(-1), reduction='sum')
+
+        average_perplexity += torch.exp(loss_fct)
+
+    average_perplexity /= examples
+    return {"perplexity": average_perplexity}
 
 # Function that loads and returns the GMS8K dataset
 def load_gsm8k_easy():
@@ -1518,7 +1705,6 @@ if __name__ == "__main__":
                         ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                     case "arg_training-debug":
                         ex_config["base_model"] = "GPTJ"
@@ -1531,7 +1717,6 @@ if __name__ == "__main__":
                         ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                     case "full-data":
                         ex_config["base_model"] = "GPTJ"
@@ -1544,7 +1729,6 @@ if __name__ == "__main__":
                         ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                     case "full-data-fr":
                         ex_config["base_model"] = "GPTJ"
@@ -1557,7 +1741,6 @@ if __name__ == "__main__":
                         #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                     case "just-gen":
                         ex_config["base_model"] = "GPTJ"
@@ -1584,6 +1767,31 @@ if __name__ == "__main__":
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
                         ex_config["tool_top_k"] = 1
+                    case "just-gen-task":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-just-gen"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 1
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "just-gen-mono-task":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-just-gen"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 1
                     case "mickey":
                         ex_config["base_model"] = "GPTJ"
                         ex_config["model_path"] = TRAINED_MODELS["GPTJ-mickey"]
@@ -1595,7 +1803,6 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                     case "mickey-task":
                         ex_config["base_model"] = "GPTJ"
@@ -1633,7 +1840,6 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
                     case "small-task-no-calc-mono":
@@ -1647,7 +1853,6 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                     case "small-task":
                         ex_config["base_model"] = "GPTJ"
@@ -1660,7 +1865,6 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
                     case "small-task-mono":
@@ -1674,7 +1878,108 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                    # This model is quite different to small. It is trained on a different dataset, but has around the same size
+                    case "small2":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "small2-0":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "small2-0-low":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 1
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "small2-high":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 30
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "small2-low":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 3
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "small2-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                    case "small2-0-shot-task":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                    case "small2-0-shot-no-task":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-small2"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
                         ex_config["tool_top_k"] = 10
                     case "med":
                         ex_config["base_model"] = "GPTJ"
@@ -1687,8 +1992,59 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-0":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
                         ex_config["tool_top_k"] = 15
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-0-low":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 1
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-task":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-task00":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 00 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
                     case "med-mono":
                         ex_config["base_model"] = "GPTJ"
@@ -1701,8 +2057,7 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
-                        ex_config["tool_top_k"] = 15
+                        ex_config["tool_top_k"] = 10
                     case "med6":
                         ex_config["base_model"] = "GPTJ"
                         ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
@@ -1714,8 +2069,7 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
-                        ex_config["tool_top_k"] = 15
+                        ex_config["tool_top_k"] = 10
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
                     case "med6-mono":
                         ex_config["base_model"] = "GPTJ"
@@ -1728,8 +2082,7 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
-                        ex_config["tool_top_k"] = 15
+                        ex_config["tool_top_k"] = 10
                     case "med-low-k":
                         ex_config["base_model"] = "GPTJ"
                         ex_config["model_path"] = TRAINED_MODELS["GPTJ-med"]
@@ -1741,8 +2094,7 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
-                        ex_config["tool_top_k"] = 5
+                        ex_config["tool_top_k"] = 3
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
                     case "med-lowlow-k":
                         ex_config["base_model"] = "GPTJ"
@@ -1755,7 +2107,6 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 2
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
                     case "med-arg":
@@ -1769,9 +2120,47 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-arg-0":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-arg"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-arg00":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-arg"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 00 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-arg00-no-doc":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-arg"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 00 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                        ex_config["override_tool_explan"] = {tool:prepare_prompt("2 00 0", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
                     case "med-arg6":
                         ex_config["base_model"] = "GPTJ"
                         ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-arg"]
@@ -1783,7 +2172,6 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
                     case "med-arg6-low-k":
@@ -1797,7 +2185,6 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 3
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
                     case "med-arg6-high-k":
@@ -1811,9 +2198,309 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
+                        ex_config["tool_top_k"] = 30
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-calc":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-calc"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-calc-0":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-calc"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
                         ex_config["tool_top_k"] = 3
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-calc-1":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-calc"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 15
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-calc-2":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-calc"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 2 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-calc-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-calc"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 2 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 30
+                    case "med-full":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["peft_path"] = TRAINED_MODELS["GPTJ-med-full"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                    case "med-shuffle":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-shuffle"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-shuffle-no-task":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-shuffle"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-shuffle-2shot":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-shuffle"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-token":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-token-top5":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 5
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-token-3shot":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 0 2 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 40
+                        ex_config["tools"] = ["Calculator", "GPT3Wiki", "Calendar"]
+                    case "med-no-token-no-tools-1":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "0 1+ spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["disable_tools"] = True
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-token-no-tools-2":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["disable_tools"] = True
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-token-high-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 40
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-token-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                    case "med-no-token-mono-high-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 30
+                    case "med-no-token-mono-low-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 30
+                    case "med-no-token-low-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-token-0":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-token-no-calc":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token-no-calc"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-token-no-calc-0":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token-no-calc"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "med-no-token-no-calc-mono":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token-no-calc"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                    case "med-no-token-no-calc-mono-high-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-med-no-token-no-calc"]
+                        ex_config["tool_tokens"] = [" ["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["tool_token_ids"] = [685]
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 30
                     case "large":
                         ex_config["base_model"] = "GPTJ"
                         ex_config["model_path"] = TRAINED_MODELS["GPTJ-large"]
@@ -1825,7 +2512,19 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "large-arg":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-large-arg"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
                         ex_config["tool_top_k"] = 10
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
                     case "large-mono":
@@ -1839,7 +2538,6 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 10
                     case "large-low-k":
                         ex_config["base_model"] = "GPTJ"
@@ -1852,7 +2550,6 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 3
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
                     case "large-high-k":
@@ -1866,9 +2563,113 @@ if __name__ == "__main__":
                         # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
-                        catch_answers = False
                         ex_config["tool_top_k"] = 30
                         ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "huge":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-huge"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "huge-0":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-huge"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "huge-2":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-huge"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 2 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "huge-low-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-huge"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 3
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "huge-high-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-huge"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 3 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 40
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "huge6-5k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-huge"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 36 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 5
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "huge-1":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-huge"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "huge-1-high-k":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["model_path"] = TRAINED_MODELS["GPTJ-huge"]
+                        ex_config["new_tokens"] = [" <TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = [" <TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        # ex_config["override_tool_explan"] = {tool:prepare_prompt("2 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 30
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                        
 
 
 
@@ -1878,7 +2679,6 @@ if __name__ == "__main__":
                         ex_config["base_model"] = "GPTJ"
                         ex_config["disable_tools"] = True
                         ex_config["free_gen_prompt_name"] = "0.5 spec"
-                        catch_answers = False
                     case "GPTJ_Master_1.5":
                         ex_config["base_model"] = "GPTJ"
                         ex_config["free_gen_prompt_name"] = "1.5 spec"
@@ -1888,7 +2688,6 @@ if __name__ == "__main__":
                         ex_config["base_model"] = "GPTJ"
                         ex_config["disable_tools"] = True
                         ex_config["free_gen_prompt_name"] = "0 1b spec"
-                        catch_answers = False
                     case "GPTJ_Masterb":
                         ex_config["base_model"] = "GPTJ"
                         ex_config["free_gen_prompt_name"] = "1 1b spec"
@@ -1906,7 +2705,33 @@ if __name__ == "__main__":
                         ex_config["base_model"] = "GPTJ"
                         ex_config["free_gen_prompt_name"] = "1 1 spec"
                         ex_config["substitute_explan_tokens"] = ["[", "]"]
+                    case "GPTJ_Master-0shot":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["free_gen_prompt_name"] = "1.5 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+
+                        TOOL_DOCUMENTATION["Calculator"]["tool_explanation"] = """The Calculator tool computes arithmetic expressions. You can call the API by writing "[Calculator(expression→]" where "expression" is the expression to be computed."""
+                        TOOL_DOCUMENTATION["WikiSearch"]["tool_explanation"] = """The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "[WikiSearch(term)→]" where "term" is the search term you want to look up."""
                         
+                        ex_config["top_k"] = 50
+                    case "GPTJ_Master-2shot-5":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["free_gen_prompt_name"] = "1 2 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+
+                        TOOL_DOCUMENTATION["Calculator"]["tool_explanation"] = """The Calculator tool computes arithmetic expressions. You can call the API by writing "[Calculator(expression→]" where "expression" is the expression to be computed."""
+                        TOOL_DOCUMENTATION["WikiSearch"]["tool_explanation"] = """The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "[WikiSearch(term)→]" where "term" is the search term you want to look up."""
+                        
+                        ex_config["top_k"] = 5
+                    case "GPTJ_Master-2shot-15":
+                        ex_config["base_model"] = "GPTJ"
+                        ex_config["free_gen_prompt_name"] = "1 2 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+
+                        TOOL_DOCUMENTATION["Calculator"]["tool_explanation"] = """The Calculator tool computes arithmetic expressions. You can call the API by writing "[Calculator(expression→]" where "expression" is the expression to be computed."""
+                        TOOL_DOCUMENTATION["WikiSearch"]["tool_explanation"] = """The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "[WikiSearch(term)→]" where "term" is the search term you want to look up."""
+                        
+                        ex_config["top_k"] = 15
                     case _:
                         raise ValueError(f"Experiment name {name} not recognised")
 
@@ -1916,6 +2741,8 @@ if __name__ == "__main__":
                     ex_config["free_gen_prompt_name"] = ex_config["free_gen_prompt_name"].replace("spec", dataset["type"])
 
 
+
+            
             # TODO BASELINE GPTJ
             # TriviaQA
             # SVAMP
@@ -1952,6 +2779,7 @@ if __name__ == "__main__":
             generous_acc, result = incl_acc(correct_answers, responses, det = True)
             metrics_to_report.append(f"Generous accuracy: {generous_acc}")
 
+            results_asdiv_exa = []
             if dataset["type"] == "math":
                 first_numbers_arr = list(map(first_number, call_less_arr_responses))
                 first_numbers_end = list(map(first_number, call_less_end_responses))
@@ -2020,17 +2848,21 @@ if __name__ == "__main__":
 
 ###########################################################################\n\n""".replace("[metrics]", metrics)
             
-            for question, resp, answer in zip(questions, responses, correct_answers, strict=True):
-                print(f"QUESTION: {question}")
-                print(f"ANSWER: {answer}")
-                print(f"RESPONSE: {resp}".replace("\n", "\n--"))
-                print()
-            
             LOGGER.info(f"Finished experiment {name} for {dataset['name']}")
             LOGGER.warn(results_ascii)
             TOOLMASTER_LOGGER.warn(results_ascii)
             LOGGER.debug(ex_results)
             write_results(ex_results, total_time, benchmark_name = dataset["name"], model_name = f"{project_description}_{name}")
+
+            
+            for i, (question, resp, answer) in enumerate(zip(questions, responses, correct_answers, strict=True)):
+                print("________________________________________________________________________________")
+                print(f"QUESTION: {question}")
+                if len(results_asdiv_exa) == len(question): print(f"RESULT (arr): {results_asdiv_exa[i]}, (end): {results_asdiv_exe[i]}")
+                print(f"ANSWER: {answer}")
+                print(f"RESPONSE: {resp}".replace("\n", "\n--"))
+                print("________________________________________________________________________________")
+                print()
 
             torch.cuda.empty_cache()
 

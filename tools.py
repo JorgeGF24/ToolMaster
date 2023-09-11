@@ -2,6 +2,9 @@ import re
 from operator import add, sub, mul, truediv
 from beartype import beartype
 
+import openai
+
+import wolframalpha
 # TOKENS:
 
 TOKENS = {
@@ -245,3 +248,26 @@ def WikiSearch(term: str, args = None):
     assert len(term) > 0, "Argument to the WikiSearch API should not be empty."
     hits = searcher.search(term)
     return hits[0].raw
+
+
+
+def WolframAlphaCalculator(input_query: str):
+    wolfram_alpha_appid = "WVAAYJ-88RXQVQUXV"
+    wolfram_client = wolframalpha.Client(wolfram_alpha_appid)
+    res = wolfram_client.query(input_query)
+    assumption = next(res.pods).text
+    answer = next(res.results).text
+    # return f"Assumption: {assumption} \nAnswer: {answer}"
+    return answer
+
+openai.api_key = "***REMOVED***"
+
+def GPT3Wiki(prompt):
+    completion = openai.ChatCompletion.create(
+    model="gpt-3.5-turbo",
+    messages=[
+            {"role": "system", "content": f"You are a fact tool that returns short encyclopedic answers to the query: {prompt}"},
+        ],
+    max_tokens=50,
+    )
+    return completion["choices"][0]["message"]["content"]

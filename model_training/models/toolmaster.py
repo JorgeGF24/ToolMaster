@@ -12,11 +12,13 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 from torch import tensor as Tensor
 
+import numpy as np
+import openai
+
 from beartype import beartype
 from beartype.typing import List, Callable, Union, Dict, Tuple
 
 # Import parent class of AutoTokenizer
-from transformers import LlamaTokenizer, AutoTokenizer, GPT2Tokenizer
 
 from importlib import reload
 
@@ -50,8 +52,8 @@ TOOL_TOKEN = "["
 END_TOOL_TOKEN = "]"
 TOOL_TOKEN_IDS = []
 END_API_TOKEN = 50401
-OPEN_PARENTHESIS = "("
-OPEN_PARENTHESIS_ID = 7
+OPEN_PARENTHESIS = "|"
+OPEN_PARENTHESIS_ID = 91
 CLOSE_PARENTHESIS = 8
 
 GPTJ_ARG_STOPPERS = [39310, 15168, 15437, 25295, 48600, 
@@ -69,6 +71,8 @@ GPTJ_ARG_STOPPERS = [39310, 15168, 15437, 25295, 48600,
                      4357,   #  ],
                      91,     #  |
                      ]
+
+GPTJ_BAR_TOKEN = 91
 
 ROW_STATUS_MEANING = {
      0: "Selecting tool",
@@ -112,6 +116,15 @@ def renumerate(sequence, start=None):
         yield n, elem
         n -= 1
 
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+def get_embedding(text, model="text-embedding-ada-002"):
+   # Return random vector of length 3:
+   return np.random.rand(3)
+   text = text.replace("\n", " ")
+   return openai.Embedding.create(input = [text], model=model)['data'][0]['embedding']
+
 
 # Tools given to the toolmaster must have:
 # 1. Name: str - Unique identifier for the tool
@@ -119,7 +132,7 @@ def renumerate(sequence, start=None):
 # 3. Tool: Callable - A function that takes a list of argumets and returns a string
 # 4. Explanation prompt: Union[torch.Tensor, str] - A string that explains how to use the tool
 # 5. Short description: Optional[str] - A short description of the tool
-
+# 6. Embedding: Optional[torch.Tensor] - A vector that represents the tool. Necessary for method b.
 
 
 @beartype
@@ -128,7 +141,7 @@ class ToolMaster(nn.Module):
         self,
         model: nn.Module,
         *,
-        tool_specs: List[Dict],  # of the form {"name": str, "arg_parser": Callable, "tool": Callable, "explanation_prompt": Union[torch.Tensor, str], "short_desc": Optional[str], "max_arg_tokens": int}
+        tool_specs: List[Dict],  # of the form {"name": str, "arg_parser": Callable, "tool": Callable, "explanation_prompt": Union[torch.Tensor, str], "short_desc": Optional[str], "max_arg_tokens": int, "embedding": Optional[torch.Tensor]}
         tokenizer,
         tool_token_ids: List[int],
         end_tool_token: str = END_TOOL_TOKEN,
@@ -149,6 +162,8 @@ class ToolMaster(nn.Module):
         arg_sampling_batch_size: int = 251,
         greedy_sampling: bool = True,
         tool_top_k: int = 1,
+        method_b: bool = False,
+        max_intention_tokens: int = 25,
         **kwargs,
     ):
         super().__init__()
@@ -232,7 +247,7 @@ class ToolMaster(nn.Module):
         self.greedy_sampling = greedy_sampling
         self.tool_top_k = tool_top_k
 
-        self.close_bad_arg = Tensor(self.encode(f"{PAD_TOKEN}){END_TOOL_TOKEN}")[1:]).to(self.device)
+        self.close_bad_arg = Tensor(self.encode(f"{PAD_TOKEN}{END_TOOL_TOKEN}")[1:]).to(self.device)
 
         self.tool_explan_sub_indices = []
         for explan in tool_explanation_prompts:
@@ -279,6 +294,11 @@ class ToolMaster(nn.Module):
 
         self.export_tool_execution = export_tool_execution
 
+        self.method_b = method_b
+        self.max_intention_tokens = max_intention_tokens
+        self.bar_token = tokenizer.encode("|")[-1]
+        
+
         # COPY PROMPT X TIMES
         # self.tokenized_free_generation_prompt.unsqueeze(0).repeat(batch_size,1)
 
@@ -299,7 +319,6 @@ class ToolMaster(nn.Module):
                  stop_tokens: Union[List[int],int,torch.Tensor] = []):
         
         global PAD_ID, PAD_TOKEN, OPEN_PARENTHESIS_ID, TOOL_TOKEN_IDS, LOGIT_DISPLACEMENT
-
         device = self.device
 
         # Each data point as it goes through the loop should have:
@@ -360,6 +379,7 @@ class ToolMaster(nn.Module):
         initial_prompt_length = batch_input.shape[1]
         attention_mask = batch_input != PAD_ID
         new_generated_content = [None for _ in range(batch_size)]
+        intention_tokens = [[] for _ in range(batch_size)]
         
         # extra_pad = (batch_lengths + max_new_tokens - batch_generated_count - batch_input.shape[1]).max().item()
         # batch_input = F.pad(batch_input, (0, extra_pad,), value=PAD_ID)
@@ -427,36 +447,45 @@ class ToolMaster(nn.Module):
                 status[caught_answers] = 1   # Generating status (can be stopped)
 
             # Sampling procedure for rows selecting a tool
-            # 0 -> -1, -2
-            for selecting_i in (status==0).nonzero().squeeze(1):
-                    # data_i = loop_to_data_idx[selecting_i].item()
-                    # Tool names are composed of tokens. ie. [CAL] [CUL] [ATOR]. We call each token a syllable
-                    # Options for the next syllable. 
-                syllable_opts = Tensor(list(current_opts[selecting_i].keys())).to(device)
-                next_syllable_idx = loop_last_logits[selecting_i,syllable_opts].argmax(dim=-1)
-                next_syllable = syllable_opts[next_syllable_idx].item() 
-                loop_sampled[selecting_i] = next_syllable
-                loop_selection_depth[selecting_i] += 1
-                current_opts[selecting_i] = current_opts[selecting_i][next_syllable]
+            if self.method_b:
+                loop_sampled[status==0] = gumbel_sample(loop_last_logits[status==0], temperature=temperature).unsqueeze(1)
+                finished_intent = torch.isin(loop_sampled, self.bar_token).squeeze(1) & (status==0)
+                status[finished_intent] = -1 if max_new_tokens[selecting_i] > 0 else -2
 
-                # IF current opts is a dict, there is a tie between possible tools. We need to keep selecting syllables.
-                # PASS
-                if not isinstance(current_opts[selecting_i], dict):
-                    # ELSE: We've reached a tool id
-                    tool_id = current_opts[selecting_i]
-                    depth = loop_selection_depth[selecting_i].item()-1      # Selection_depth = i means we've selected the ith syllable of tool name. -1 for indexing purposes.
-                    tool_len = len(self.tokenized_tools[tool_id])
+                # Add token sampled for eaach status==0 to intention tokens:
+                for i in (status==0).nonzero().squeeze(1):
+                    intention_tokens[i].append(loop_sampled[i].item())
+            else:
+                # 0 -> -1, -2
+                for selecting_i in (status==0).nonzero().squeeze(1):
+                        # data_i = loop_to_data_idx[selecting_i].item()
+                        # Tool names are composed of tokens. ie. [CAL] [CUL] [ATOR]. We call each token a syllable
+                        # Options for the next syllable. 
+                    syllable_opts = Tensor(list(current_opts[selecting_i].keys())).to(device)
+                    next_syllable_idx = loop_last_logits[selecting_i,syllable_opts].argmax(dim=-1)
+                    next_syllable = syllable_opts[next_syllable_idx].item() 
+                    loop_sampled[selecting_i] = next_syllable
+                    loop_selection_depth[selecting_i] += 1
+                    current_opts[selecting_i] = current_opts[selecting_i][next_syllable]
 
-                    # tokens_permited = max(0, min(tool_len, max_new_tokens[selecting_i] - 1 + depth))
-                    tool_histories[selecting_i].append({"id": tool_id})
+                    # IF current opts is a dict, there is a tie between possible tools. We need to keep selecting syllables.
+                    # PASS
+                    if not isinstance(current_opts[selecting_i], dict):
+                        # ELSE: We've reached a tool id
+                        tool_id = current_opts[selecting_i]
+                        depth = loop_selection_depth[selecting_i].item()-1      # Selection_depth = i means we've selected the ith syllable of tool name. -1 for indexing purposes.
+                        tool_len = len(self.tokenized_tools[tool_id])
 
-                    end_idx = -depth
-                    if end_idx == 0:
-                        end_idx = batch_input.shape[1]
-                    new_generated_content[selecting_i] = torch.cat((batch_input[selecting_i, initial_prompt_length:end_idx], Tensor(self.tokenized_tools[tool_id]).to(device), OPEN_PARENTHESIS_ID))
-                    max_new_tokens[selecting_i] -= tool_len - depth - 1 + 1  # +1 as we will subtract one later. -1 for open parenthesis
-                    
-                    status[selecting_i] = -1 if max_new_tokens[selecting_i] > 0 else -2
+                        # tokens_permited = max(0, min(tool_len, max_new_tokens[selecting_i] - 1 + depth))
+                        tool_histories[selecting_i].append({"id": tool_id})
+
+                        end_idx = -depth
+                        if end_idx == 0:
+                            end_idx = batch_input.shape[1]
+                        new_generated_content[selecting_i] = torch.cat((batch_input[selecting_i, initial_prompt_length:end_idx], Tensor(self.tokenized_tools[tool_id]).to(device), OPEN_PARENTHESIS_ID))
+                        max_new_tokens[selecting_i] -= tool_len - depth - 1 + 1  # +1 as we will subtract one later. -1 for open parenthesis
+                        
+                        status[selecting_i] = -1 if max_new_tokens[selecting_i] > 0 else -2
 
 
             if self.debug_level > 2:
@@ -466,6 +495,7 @@ class ToolMaster(nn.Module):
             # 1, 2 -> 0
             just_sampled_tool = torch.isin(loop_sampled, TOOL_TOKEN_IDS.to(device)).squeeze(1)
             status[just_sampled_tool] = 0
+            if self.method_b: max_new_tokens[just_sampled_tool] = torch.min(max_new_tokens[just_sampled_tool], self.max_intention_tokens)
 
 
             # Print every row's generated content in the format: 
@@ -503,6 +533,14 @@ class ToolMaster(nn.Module):
 
                     if new_generated_content[i] is None:
                         new_generated_content[i] = batch_input[i, initial_prompt_length:].view(-1)
+
+                    if self.method_b:
+                        embedding = get_embedding(self.decode(new_generated_content[i]))
+                        similarities = [cosine_similarity(tool["embedding"], embedding) for tool in self.tools]
+                        # Select tool of maximum score:
+                        tool_id = similarities.index(max(similarities))
+                        tool_histories[i].append({"id": tool_id})
+                        new_generated_content[i] = torch.cat((new_generated_content[i], Tensor(self.tokenized_tools[tool_id]).to(device), OPEN_PARENTHESIS_ID))
 
                     return_list[data_i] = {
                         "user_prompt": user_prompts[i],
@@ -552,6 +590,7 @@ class ToolMaster(nn.Module):
         LOGGER.info(f"Received batch of {len(sentences)} sentences")
 
         device = self.device
+        self.disable_tools = False
 
         # We tokenize the texts and store then in tuples with (data_id, tokenized_sentence, generated_content, tool_history)
         pending_completion = [(id, longTensor(self.encode(prompt)).to(device), longTensor([]).to(device), [], 0) for id, prompt in enumerate(sentences)]
@@ -648,7 +687,8 @@ class ToolMaster(nn.Module):
             #####################################################################################################
             #                                   ARGUMENT GENERATION MODE                                        #
             #####################################################################################################
-
+            self.disable_tools = True
+            
             batch_size = min(len(pending_arg_sampling),self.arg_sampling_batch_size)
             total_to_generate_args = len(pending_arg_sampling)
             LOGGER.info("STARTING ARGUMENT GENERATION MODE")
@@ -697,7 +737,7 @@ class ToolMaster(nn.Module):
 
                     id = ids[loop_i]
                     status = row["status"]
-                    tool_histories[loop_i][-1]["args"] = self.decode(row["new_content"])
+                    row["tool_history"][-1]["args"] = self.decode(row["new_content"])
 
                     assert status in [-1, -2], "Status should be -1 or -2 for finished sentences in arg gen mode."
                     LOGGER.debug(f"Sentence {id} went {status}")
@@ -711,7 +751,7 @@ class ToolMaster(nn.Module):
                         finished_sentences[id] = {"user_prompt": sentences[id], "response":response , "tool_history":row["tool_history"], "status":status}
                         count_finished += 1
                         row["tool_history"][-1]["status"] = 2
-                        
+                         
                         LOGGER.info(f"Model failed to generate arguments for: \ndata: {sentences[id] + response}")
                         LOGGER.info(f"Loop id {loop_i}, data id {id}")
                         LOGGER.info(f"Tool history: {tool_histories[loop_i]}")
@@ -723,12 +763,13 @@ class ToolMaster(nn.Module):
                     # Remove last token if it is a ) or an arrow
                     if arg[-1] == "→":
                         arg = arg[:-1]
-                    if arg[-1] == ")":
-                        arg = arg[:-1]
+                    #if arg[-1] == ")":
+                    #    arg = arg[:-1]
 
                     gen_content = torch.cat((generated_content[loop_i], Tensor(self.encode(arg)).long().to(device)))
                     pending_tool_execution.append((id, user_prompts[loop_i], gen_content, tool_histories[loop_i], arg, row["tool_use_len"] + len(row["new_content"])))
                     
+                    LOGGER.debug(f"Sentence {id} went -2")
                     tool_histories[loop_i][-1]["args"] = arg
 
                     """elif status == -2:
@@ -801,7 +842,7 @@ class ToolMaster(nn.Module):
 
                     LOGGER.debug(f"Executing tool {self.tool_names[tool_id]} with args {decoded_args}, parsed: {parsed_args}, output: {tool_output}")
  
-                    tool_output = self.encode(")→ " + str(tool_output), truncation=True, max_length=self.max_response_len)
+                    tool_output = self.encode("→ " + str(tool_output), truncation=True, max_length=self.max_response_len)
                     tool_output = self.encode(self.decode(tool_output) + END_TOOL_TOKEN, return_tensors="pt")[0].to(device).long()
                     generated_content = torch.cat((generated_content, tool_output))
                     
