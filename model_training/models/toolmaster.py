@@ -56,21 +56,56 @@ OPEN_PARENTHESIS = "|"
 OPEN_PARENTHESIS_ID = 91
 CLOSE_PARENTHESIS = 8
 
-GPTJ_ARG_STOPPERS = [39310, 15168, 15437, 25295, 48600, 
-                     35944,  #  ]).
-                     5974,   #  ]:
-                     46570,  #  ]),
-                     12962,  #  ])
-                     45297,  #  ]-
-                     16151,  #  ](
-                     22241,  #  ]=
-                     30866,  #  ]"
-                     48688,  #  ]+
-                     60,     #  ]
-                     4083,   #  ].
-                     4357,   #  ],
-                     91,     #  |
-                     ]
+GPTJ_ARG_STOPPERS = [
+    39310, 15168, 15437, 25295, 48600, 
+    35944,  #  ]).
+    5974,   #  ]:
+    46570,  #  ]),
+    12962,  #  ])
+    45297,  #  ]-
+    16151,  #  ](
+    22241,  #  ]=
+    30866,  #  ]"
+    48688,  #  ]+
+    60,     #  ]
+    4083,   #  ].
+    4357,   #  ],
+    91,     #  |
+]
+
+LLAMA_ARG_STOPPERS = [
+    850,      #](
+    1385,      #];
+    1402,      #],
+    1822,      #].
+    2314,      #])
+    3108,      #"]
+    4514,      #▁]
+    4638,      #)]
+    5262,      #]]
+    5387,      #]:
+    5586,      #.]
+    8219,      #'];
+    9341,      #]$
+    10062,      #]+
+    10514,      #](#
+    10725,      #]\
+    10846,      #?](
+    11287,      #'])
+    11424,      #▁\]
+    11724,      #]),
+    12940,      #▁];
+    13192,      #]=
+    21251,      #▁],
+    21540,      #]_
+    28166,      #))]
+    28895,      #]->
+    29588,      #▁]]
+    29962,      #]
+    10309,      #▁→
+    30121,      #→
+]
+
 
 GPTJ_BAR_TOKEN = 91
 
@@ -157,13 +192,14 @@ class ToolMaster(nn.Module):
         answer_token_ids: List[int] = None,
         post_answer_token_ids: List[int] = None,
         disable_tools:bool = False,
-        pretty_tools: bool = False,
+        pretty_tools: bool = True,
         free_generation_batch_size: int = 251,
         arg_sampling_batch_size: int = 251,
         greedy_sampling: bool = True,
         tool_top_k: int = 1,
         method_b: bool = False,
         max_intention_tokens: int = 25,
+        is_llama: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -213,7 +249,8 @@ class ToolMaster(nn.Module):
             self.free_gen_sub_idx = len(self.encode(free_generation_prompt.split("[PROMPT]")[0]))
         else:
             self.free_gen_sub_idx = len(self.encode(free_generation_prompt))
-        self.tokenized_free_generation_prompt = longTensor(self.encode(self.free_generation_prompt)).to(self.device)
+        optional_bos = [tokenizer.bos_token_id] if is_llama else []
+        self.tokenized_free_generation_prompt = longTensor(optional_bos + self.encode(self.free_generation_prompt)).to(self.device)
 
         tool_selection_dict = {}
         # This function creates a decision tree for the tool selection. The model chooses at each depth the token with the highest probability, until it reaches a tool id.
@@ -241,9 +278,11 @@ class ToolMaster(nn.Module):
 
         self.tool_selection_dict = tool_selection_dict
         tool_explanation_prompts = [tool_spec["explanation_prompt"] for tool_spec in tool_specs]
-        prepare_explan_for_gen = lambda x: longTensor(self.encode(x.replace("[PROMPT]", ""))).to(self.device)
+        prepare_explan_for_gen = lambda x: longTensor(optional_bos + self.encode(x.replace("[PROMPT]", ""))).to(self.device)
         self.tool_explanation_prompts = list(map(prepare_explan_for_gen,  tool_explanation_prompts))
         self.disable_tools = disable_tools
+        self.original_disable_tools = disable_tools
+        self.only_1_call = False
         self.greedy_sampling = greedy_sampling
         self.tool_top_k = tool_top_k
 
@@ -289,7 +328,7 @@ class ToolMaster(nn.Module):
         for key, value in tokenizer.get_vocab().items():
             if "→" in key or "]" in key or "|" in key:     # or ")" in key:  # Remove close parenthesis TODO
                 self.arg_gen_stoppers.append(value)
-        self.arg_gen_stoppers = GPTJ_ARG_STOPPERS
+        self.arg_gen_stoppers = LLAMA_ARG_STOPPERS if is_llama else GPTJ_ARG_STOPPERS
         self.arg_gen_stoppers = Tensor(self.arg_gen_stoppers).to(self.model.device)
 
         self.export_tool_execution = export_tool_execution
@@ -436,6 +475,8 @@ class ToolMaster(nn.Module):
             if self.tool_top_k > 1 and samp.shape[0] > 0:
                 _, top_k = loop_last_logits[status>0].topk(self.tool_top_k, dim=-1)
                 # If the top k index , insert tool token in that position
+                print(top_k)
+                print(TOOL_TOKEN_IDS)
                 present = torch.tensor([torch.isin(TOOL_TOKEN_IDS[0], top_k[i], assume_unique=True) for i in range(samp.shape[0])]).to(device)
                 samp[present] = TOOL_TOKEN_IDS[0]
             loop_sampled[status>0] = samp
@@ -590,7 +631,7 @@ class ToolMaster(nn.Module):
         LOGGER.info(f"Received batch of {len(sentences)} sentences")
 
         device = self.device
-        self.disable_tools = False
+        self.disable_tools = self.original_disable_tools
 
         # We tokenize the texts and store then in tuples with (data_id, tokenized_sentence, generated_content, tool_history)
         pending_completion = [(id, longTensor(self.encode(prompt)).to(device), longTensor([]).to(device), [], 0) for id, prompt in enumerate(sentences)]
@@ -687,7 +728,8 @@ class ToolMaster(nn.Module):
             #####################################################################################################
             #                                   ARGUMENT GENERATION MODE                                        #
             #####################################################################################################
-            self.disable_tools = True
+            if self.only_1_call:
+                self.disable_tools = True
             
             batch_size = min(len(pending_arg_sampling),self.arg_sampling_batch_size)
             total_to_generate_args = len(pending_arg_sampling)
