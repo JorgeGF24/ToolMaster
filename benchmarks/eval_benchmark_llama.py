@@ -697,11 +697,22 @@ BENCHMARK_NAME = "gsm8k-easy"
 
 cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache"
 def load_LLAMA(path:str="meta-llama/Llama-2-7b-hf",
-              new_tokens:List[str]=[],):
+              new_tokens:List[str]=[],
+              **opts):
         from transformers import LlamaTokenizer, LlamaConfig, LlamaForCausalLM
         
         kwargs = {"cache_dir": cache_dir,
                   "token": "***REMOVED***",}
+        
+        tokenizer = LlamaTokenizer.from_pretrained(
+            "meta-llama/Llama-2-7b-hf",
+            **kwargs
+        )
+        tokenizer.add_bos_token = False
+        tokenizer.add_tokens(new_tokens)# + ["[PAD]"])
+        tokenizer.pad_token = tokenizer.bos_token
+
+
         if path == "meta-llama/Llama-2-7b-hf":
             config = LlamaConfig.from_pretrained(
                 path, 
@@ -709,19 +720,6 @@ def load_LLAMA(path:str="meta-llama/Llama-2-7b-hf",
                 **kwargs
             )
             kwargs["config"] = config
-            
-
-        tokenizer = LlamaTokenizer.from_pretrained(
-            "meta-llama/Llama-2-7b-hf",
-            **kwargs
-        )
-
-        tokenizer.add_bos_token = False
-
-        tokenizer.add_tokens(new_tokens)# + ["[PAD]"])
-        tokenizer.pad_token = tokenizer.bos_token
-        
-
         model = LlamaForCausalLM.from_pretrained(
             path,
             torch_dtype=torch.float16,
@@ -800,6 +798,7 @@ def create_toolformer(
                       catch_answers=True,
                       answer_token_ids=ANSWER_TOKEN_IDS[BASE_MODEL_NAME],
                       post_answer_token_ids=POST_ANSWER_TOKEN_IDS[BASE_MODEL_NAME],
+                      is_llama=True,
                       **config
                       )
 
@@ -814,7 +813,7 @@ def create_config(
 ):
     global MODEL_NAME, FREE_GENERATION_PROMPT
  
-    model, tokenizer = load_LLAMA(model_path)
+    model, tokenizer = load_LLAMA(model_path, **kwargs)
     max_new_tokens = int(1.2*max_new_tokens)
 
     config = {
@@ -1102,7 +1101,7 @@ def first_number(answer:str, equals:bool = True) -> str:
         first_number = re.sub(dot_decimal_not, replacement, first_number)
         # Equal sign in answer:
         if equals and "=" in answer:
-            new_answer = answer.split("=")[1]
+            new_answer = answer.split("=")[1].strip(" $€£\n")
             # LOGGER.warn(f"Warning: Equal sign in answer: {answer}")
             # Get first number after equal sign:
             try:
@@ -1403,6 +1402,64 @@ if __name__ == "__main__":
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
                         ex_config["tool_top_k"] = 10
+                    case "LLAMA_baseline_0.5":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["disable_tools"] = True
+                        ex_config["free_gen_prompt_name"] = "0.5 spec"
+                    case "LLAMA_Master_1.5":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["free_gen_prompt_name"] = "1.5 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+
+                    case "LLAMA_baselineb":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["disable_tools"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1b spec"
+                    case "LLAMA_Masterb":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["free_gen_prompt_name"] = "1 1b spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+
+                    case "LLAMA_baseline":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["disable_tools"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1 spec"
+                    case "LLAMA_baseline+":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["disable_tools"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1+ spec"
+                    case "LLAMA_Master":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["free_gen_prompt_name"] = "1 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                    case "LLAMA_Master-0shot":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["free_gen_prompt_name"] = "1.5 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+
+                        TOOL_DOCUMENTATION["Calculator"]["tool_explanation"] = """The Calculator tool computes arithmetic expressions. You can call the API by writing "[Calculator(expression→]" where "expression" is the expression to be computed."""
+                        TOOL_DOCUMENTATION["WikiSearch"]["tool_explanation"] = """The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "[WikiSearch(term)→]" where "term" is the search term you want to look up."""
+                        
+                        ex_config["top_k"] = 50
+                    case "LLAMA_Master-2shot-5":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["free_gen_prompt_name"] = "1 2 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+
+                        TOOL_DOCUMENTATION["Calculator"]["tool_explanation"] = """The Calculator tool computes arithmetic expressions. You can call the API by writing "[Calculator(expression→]" where "expression" is the expression to be computed."""
+                        TOOL_DOCUMENTATION["WikiSearch"]["tool_explanation"] = """The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "[WikiSearch(term)→]" where "term" is the search term you want to look up."""
+                        
+                        ex_config["top_k"] = 5
+                    case "LLAMA_Master-2shot-15":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["free_gen_prompt_name"] = "1 2 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+
+                        TOOL_DOCUMENTATION["Calculator"]["tool_explanation"] = """The Calculator tool computes arithmetic expressions. You can call the API by writing "[Calculator(expression→]" where "expression" is the expression to be computed."""
+                        TOOL_DOCUMENTATION["WikiSearch"]["tool_explanation"] = """The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "[WikiSearch(term)→]" where "term" is the search term you want to look up."""
+                        
+                        ex_config["top_k"] = 15
+
 
                     case _:
                         raise ValueError(f"Experiment name {name} not recognised")

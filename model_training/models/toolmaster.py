@@ -214,6 +214,7 @@ class ToolMaster(nn.Module):
         PAD_ID = tokenizer.pad_token_id
         PAD_TOKEN = tokenizer.pad_token
         TOOL_TOKEN_IDS = longTensor(tool_token_ids, device=self.device).view(-1)
+        assert len(TOOL_TOKEN_IDS) > 0, "Tool token ids must be a list of at least one token id"
 
         OPEN_PARENTHESIS_ID = tokenizer.encode(OPEN_PARENTHESIS)
         assert len(OPEN_PARENTHESIS_ID) == 1, "Open parenthesis token must be a single token"
@@ -282,7 +283,7 @@ class ToolMaster(nn.Module):
         self.tool_explanation_prompts = list(map(prepare_explan_for_gen,  tool_explanation_prompts))
         self.disable_tools = disable_tools
         self.original_disable_tools = disable_tools
-        self.only_1_call = False
+        self.only_1_call = True
         self.greedy_sampling = greedy_sampling
         self.tool_top_k = tool_top_k
 
@@ -475,8 +476,6 @@ class ToolMaster(nn.Module):
             if self.tool_top_k > 1 and samp.shape[0] > 0:
                 _, top_k = loop_last_logits[status>0].topk(self.tool_top_k, dim=-1)
                 # If the top k index , insert tool token in that position
-                print(top_k)
-                print(TOOL_TOKEN_IDS)
                 present = torch.tensor([torch.isin(TOOL_TOKEN_IDS[0], top_k[i], assume_unique=True) for i in range(samp.shape[0])]).to(device)
                 samp[present] = TOOL_TOKEN_IDS[0]
             loop_sampled[status>0] = samp
