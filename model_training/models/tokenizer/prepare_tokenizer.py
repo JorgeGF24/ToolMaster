@@ -3,7 +3,7 @@ from transformers import AutoTokenizer, LlamaTokenizer
 cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache"
 # tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", cache_dir=cache_dir)
 tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf",
-                                                   token="***REMOVED***",
+                                                   token="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",
                                                    cache_dir=cache_dir)
 
 TOOL_START_TOKEN = "<TOOL>"

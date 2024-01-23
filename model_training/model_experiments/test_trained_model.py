@@ -5,7 +5,7 @@ import torch
 
 from torch.nn.utils.rnn import pad_sequence
 
-MODEL = "GPTJ"
+MODEL = "LLAMA"
 # Load the model and tokenizer
 cache_dir = "/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache/"
 if MODEL == "gpt2":
@@ -20,26 +20,38 @@ elif MODEL == "GPTJ":
     tokenizer = AutoTokenizer.from_pretrained("/vol/bitbucket/jg2619/augmenting_llms/model_training/models/tokenizer", truncate=True, max_length=270, cache_dir=cache_dir)
 elif MODEL == "LLAMA":
     tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf",
-                                                token="***REMOVED***",
+                                                token="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",
                                                 cache_dir=cache_dir)
 
     tokenizer.add_bos_token = False
 
     tokenizer.add_tokens(["[PAD]"])
     tokenizer.pad_token="[PAD]"
-    
-    config = LlamaConfig.from_pretrained("meta-llama/Llama-2-7b-hf", 
-                                            token="***REMOVED***",
-                                            padding_idx=tokenizer.pad_token_id)
+
     model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf",
-                                                token="***REMOVED***",
-                                                torch_dtype=torch.float16,
+                                                token="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",
                                                 low_cpu_mem_usage=True,
-                                                config=config,
                                                 cache_dir=cache_dir).cuda()
+    model.resize_token_embeddings(len(tokenizer))
+elif MODEL == "LLAMA-B":
+    tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf",
+                                                token="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",
+                                                cache_dir=cache_dir)
+
+    tokenizer.add_bos_token = False
+
+    tokenizer.pad_token=tokenizer.bos_token
+    
+    model = LlamaForCausalLM.from_pretrained(
+        "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/LLAMA_paper-method-b",
+        low_cpu_mem_usage=True,
+        torch_dtype=torch.float16,
+        cache_dir=cache_dir
+    ).cuda()
+    model.resize_token_embeddings(len(tokenizer))
 elif MODEL == "LLAMA-big":
     tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-13b-hf",
-                                                token="***REMOVED***",
+                                                token="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",
                                                 cache_dir=cache_dir)
 
     tokenizer.add_bos_token = False
@@ -48,10 +60,10 @@ elif MODEL == "LLAMA-big":
     tokenizer.pad_token="[PAD]"
     
     config = LlamaConfig.from_pretrained("meta-llama/Llama-2-13b-hf", 
-                                            token="***REMOVED***",
+                                            token="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",
                                             padding_idx=tokenizer.pad_token_id)
     model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-2-13b-hf",
-                                                token="***REMOVED***",
+                                                token="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",
                                                 torch_dtype=torch.float16,
                                                 low_cpu_mem_usage=True,
                                                 config=config,
@@ -96,17 +108,34 @@ prompt6 = """These are the available tools:
 
 Set up in 1954 as a merger of smaller groups, the Front de Libration Nationale fought a war for independence from France until 1962, when the French government signed a cease-fire agreement. The FLN became the only legal party in which country?"""
 
-prompts = [prompt6]
+prompt7 = """[PAD] [PAD] [PAD] [PAD] [PAD] [PAD] [PAD] [PAD] <s> These are examples where we use results from a calculator tool to complete the sentence. The calls should help you get information required to complete the text. You can call the API by writing "[Calculator(expression)]" where "expression" is the expression to be computed. Here are some examples of API calls:
+
+Example 1: Last year we collected 237342 apples, double of what we collected this year: [Calculator(237342/2)→118671] 118671.
+
+Example 2: The number in the next term is 18 + 12 x 3 = [Calculator(18+12*3)→54] 54.
+
+Example 3: A total of 252 matches were played, and 723 goals were scored (an average of [Calculator(723/252)→2.87] 2.87 per match). This is twenty goals more than in 2013, when the total was [Calculator(723-20)→703] 703 goals last year.
+
+Example 4: I went to Paris in 1994 and stayed there until 2011, so in total, it was [Calculator(2011-1994)→17] 17 years.
+
+Example 5:  Generally, [Calculator("""
+
+prompt8 = "What is the capital of France?"
+
+prompt9 = "What is 45 divided by 9?"
+
+
+prompts = [prompt8, prompt9]
 
 # Encode the prompt
-encoded_prompts = [tokenizer.encode(prompt, add_special_tokens=False, return_tensors="pt")[0].cuda() for prompt in prompts]
+encoded_prompts = [tokenizer.encode(prompt, return_tensors="pt")[0].cuda() for prompt in prompts]
 print(f"Len of prompt: {encoded_prompts[0].shape[0]}")
 
 input = pad_sequence(encoded_prompts, batch_first=True, padding_value=tokenizer.pad_token_id).cuda()
 
 # Generate the output
-output = model.generate(input, num_beams=10, max_new_tokens =100 )#do_sample=True, top_k=50, top_p=0.95, temperature=1.0, num_return_sequences=1)
-decoded_output = [tokenizer.decode(out, skip_special_tokens=True) for out in output]
+output = model.generate(input, max_new_tokens =100 )#do_sample=True, top_k=50, top_p=0.95, temperature=1.0, num_return_sequences=1)
+decoded_output = [tokenizer.decode(out, skip_special_tokens=False) for out in output]
 
 print(*decoded_output, flush=True)
 

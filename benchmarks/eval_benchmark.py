@@ -726,7 +726,7 @@ BENCHMARK_NAME = "gsm8k-easy"
 def load_GPTJ(path:str="EleutherAI/gpt-j-6B",
               new_tokens:List[str]=[],
               peft_path:str=None,
-              **kwargs):
+              **opts):
     from transformers import AutoTokenizer, AutoModelForCausalLM
     # Load the GPTJ model we will use to construct the Toolmaster model
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", cache_dir=cache_dir)
@@ -762,7 +762,7 @@ def load_LLAMA(path:str="meta-llama/Llama-2-7b-hf",
         
         kwargs = {cache_dir: cache_dir}
         if path == "meta-llama/Llama-2-7b-hf":
-            kwargs["token"] = "***REMOVED***"
+            kwargs["token"] = "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"
 
         tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf",
                                                    **kwargs)
@@ -2757,7 +2757,8 @@ if __name__ == "__main__":
             responses, tool_histories, total_time = experiment(
                 questions=questions,
                 exp_ascii=exp_ascii,
-                **ex_config)
+                **ex_config
+            )
 
 
             ######################### EVALUATION #########################

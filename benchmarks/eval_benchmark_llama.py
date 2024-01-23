@@ -162,6 +162,64 @@ Answer: 1874"""
 }
 
 
+TOOL_DOCUMENTATION = {
+    
+"Calculator": {
+    "tool_explanation":"""The calculator tool computes arithmetic expressions. You can call the API by writing "<TOOL> need to calculate | Calculator | expression → </TOOL>" where "expression" is the expression to be computed. Here are some examples of its usage:
+Example 1: Last year we collected 237342 apples, double of what we collected this year: <TOOL> dividing tool | Calculator | 237342/2 → 118671</TOOL> 118671.
+Example 2: The number in the next term is 18 + 12 x 3 = <TOOL> I want to find the answer to 18+(12*3) | Calculator | 18+(12*3) → 54</TOOL> 54.
+Example 3: A total of 252 matches were played, and 723 goals were scored (an average of <TOOL> what is 723/252 | Calculator | 723/252 → 2.87</TOOL> 2.87 per match). This is twenty goals more than the <TOOL> subraction tool | Calculator | 723-20 → 703</TOOL> 703 goals last year.
+Example 4: I went to Paris in 1994 and stayed there until 2011, so in total, it was <TOOL> compute a difference | Calculator | 2011-1994 → 17</TOOL> 17 years.""",
+    "few_shot_examples":[
+"""Question: Paris has 3 times the number of inhabitants as Madrid, which has 1 million more inhabitants than Barcelona (1.6m inhabitants). How many inhabitants does Paris have?
+Let's think step by step: Madrid has 1 million more inhabitants than Barcelona so it has <TOOL> addition | Calculator | 1.6+1 → 2.6</TOOL> 2.6m inhabitants. Therefore, as Paris has three times Madrid's population, Paris has <TOOL> need help multiplying | Calculator | 2.6*3 → 7.8</TOOL> 7.8m inhabitants.
+Answer: 7.8 million""",
+    ],
+    "example_answer": "42"
+},
+
+"Calendar": {
+    "tool_explanation":"""The calendar tool returns the current date. It can help you get information required to complete the text, such as the temporal context of a person, action or general information. You can call the API by writing "<TOOL>date | Calendar | </TOOL>". Here are some examples of its usage:
+Example 1: Today is the first <TOOL> today | Calendar | → Today is Friday, 01/01/2019</TOOL> Friday of the year.
+Example 2: The president of the United States is <TOOL>what year is it | Calendar | → Today is Tuesday, 11/02/2007</TOOL> George W. Bush.""",
+    "few_shot_examples":[
+"""Question: How many days till the first of september?
+Let's think step by step: Today is <TOOL>what date is it | Calendar | → Today is Wednesday, 21/08/2023</TOOL> Wednesday. There are 31 days in agust, so there are <TOOL> calculate a subtraction | Calculator | 31-21 → 10</TOOL> 10 days left of August. The first of september is the day after the 31st, so there are 11 days left.
+Answer: 11"""
+        ],
+    "example_answer": "2017"
+},
+
+"WikiSearch": {
+    "tool_explanation":"""The WikiSearch tool retrives Wikipedia snipets. You can use it to look up encyclopedic information from the current context. You can do so by writing "<TOOL> wiki | WikiSearch | term → </TOOL>" where "term" is the search term you want to look up. Here are some examples of API calls:
+Example 1: The colors on the flag of Ghana have the following meanings: red is for <TOOL> information on flags | WikiSearch | Ghana flag red → The red from Ghana's flag replesents the blood of martyrs</TOOL> the blood of martyrs, green for forests, and gold for mineral wealth.
+Example 2: But what are the risks during production of nanomaterials? <TOOL> need info about nanomaterians | WikiSearch | nanomaterial production risk → Evidence of lung deterioration</TOOL> Some nanomaterials may give rise to various kinds of lung damage.
+Example 3: Metformin is the first-line drug for <TOOL> internet search | WikiSearch | Metformin drug use → Metformin is used by diabetic patients</TOOL> patients with type 2 diabetes and obesity.
+Example 4: The actress Jennifer Lawrence acted alongside Leonardo di Caprio in the movie <TOOL> movie information search | WikiSearch | Jennifer Lawrence di Caprio movie → They acted together in Don't Look up</TOOL> Don't Look Up.""",
+    "few_shot_examples":[
+"""Question: What year was the prime minister of England that served during WW2 born?
+Let's think step by step: The prime minister of England that served during WW2 was <TOOL> history knowledge tool | WikiSearch | prime minister England WW2 born → Winston Churchill</TOOL> Winston Churchill. He was born in <TOOL> need biographic information on Winston Churchill | WikiSearch | Winston Churchill born → 1874</TOOL> 1874.
+Answer: 1874"""
+    ],
+    "example_answer": "George Washington"
+},
+
+"GPT3Wiki": {
+    "tool_explanation":"""The GPT3Wiki tool replies to user queries. It can reply to specific questions, or general information on a query. You can do so by writing "<TOOL>GPT3Wiki|query→</TOOL>" where "query" is the query you want to look up. Here are some examples of API calls:
+Example 1: The colors on the flag of Ghana have the following meanings: red is for <TOOL>GPT3Wiki|meaning red Ghana flag→ The red from Ghana's flag replesents the blood of martyrs</TOOL> the blood of martyrs, green for forests, and gold for mineral wealth.
+Example 2: But what are the risks during production of nanomaterials? <TOOL>GPT3Wiki|nanomaterial production risk→ Evidence of lung deterioration</TOOL> Some nanomaterials may give rise to various kinds of lung damage.
+Example 3: Metformin is the first-line drug for <TOOL>GPT3Wiki|Metformin use→ Metformin is used by diabetic patients</TOOL> patients with type 2 diabetes and obesity.
+Example 4: The actress Jennifer Lawrence acted alongside Leonardo di Caprio in the movie <TOOL>GPT3Wiki|What movie did Jennifer Lawrence and Leonardo di Caprio act together→ They acted together in Don't Look up</TOOL> Don't Look Up.""",
+    "few_shot_examples":[
+"""Question: What year was the prime minister of England that served during WW2 born?
+Let's think step by step: The prime minister of England that served during WW2 was <TOOL>GPT3Wiki|prime minister England WW2→ Winston Churchill</TOOL> Winston Churchill. He was born in <TOOL>GPT3Wiki|Winston Churchill born→ 1874</TOOL> 1874.
+Answer: 1874"""
+    ],
+    "example_answer": "George Washington"
+}
+}
+
+
 
 
 
@@ -196,6 +254,9 @@ FREE_GENERATION_PROMPT = {
 
 ####################    None    ################################# 0 0 0  None
 "0 0 0": "[PROMPT]\n",
+
+"0.2": """Question: [PROMPT]
+Answer:""",
 
 "0.5 wiki": """Answer the following questions that evaluate your general knowledge.
 
@@ -683,6 +744,13 @@ def get_model_path(name):
 TRAINED_MODELS = {
     "GPTJ-no-add-sub-0": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/GPTJ_goody",
     "LLAMA-paper": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/LLAMA_paper",
+    "LLAMA-paper-no-calc": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/LLAMA_paper-no-calc",
+    "LLAMA-paper-no-calc-small": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/LLAMA_paper-no-calc-small",
+    "LLAMA-paper-no-token": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/LLAMA_paper-no-token",
+    "LLAMA-method-b": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/LLAMA_paper-method-b",
+    "LLAMA-method-b-no-calc": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/LLAMA_paper-method-b-no-calc",
+    "LLAMA-method-b-token": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/LLAMA_paper-method-b-token",
+    "LLAMA-toolformer": "/vol/bitbucket/jg2619/augmenting_llms/model_training/models/LLAMA_paper-toolformer",
 }
 
 
@@ -702,7 +770,7 @@ def load_LLAMA(path:str="meta-llama/Llama-2-7b-hf",
         from transformers import LlamaTokenizer, LlamaConfig, LlamaForCausalLM
         
         kwargs = {"cache_dir": cache_dir,
-                  "token": "***REMOVED***",}
+                  "token": "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",}
         
         tokenizer = LlamaTokenizer.from_pretrained(
             "meta-llama/Llama-2-7b-hf",
@@ -804,7 +872,6 @@ def create_toolformer(
 
 @beartype
 def create_config(
-    base_model_name: str = "LLAMA", # GPTJ or LLAMA
     model_path: str = "meta-llama/Llama-2-7b-hf",
     max_new_tokens: int = 40,
     free_gen_prompt_name: str = "CALC_EXPLAN_1SHOT",
@@ -1261,7 +1328,7 @@ if __name__ == "__main__":
     print(experiment_names)
     print(sys.argv[2])
     print(sys.argv)
-    if len(sys.argv) > 2:
+    if len(sys.argv) > 3:
         project_description = sys.argv[3]
     else:
         project_description = "default"
@@ -1390,6 +1457,7 @@ if __name__ == "__main__":
                         ex_config["base_model"] = "LLAMA"
                         ex_config["disable_tools"] = True
                         ex_config["free_gen_prompt_name"] = "0 1 spec"
+
                     case "llama-1":
                         ex_config["base_model"] = "LLAMA"
                         ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper"]
@@ -1402,10 +1470,236 @@ if __name__ == "__main__":
                         #ex_config["debug_level"] = 2
                         ex_config["pretty_tools"] = True
                         ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-2":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper"]
+                        ex_config["new_tokens"] = ["<TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = ["<TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-3":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper"]
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["new_tokens"] = ["<TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = ["<TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-4":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper"]
+                        ex_config["new_tokens"] = ["<TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = ["<TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["free_gen_prompt_name"] = "2 0 2 spec"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    
+                    
+                    
+                    case "llama-no-calc":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper-no-calc"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-no-calc-task":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper-no-calc"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-no-calc-small-task":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper-no-calc-small"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["free_gen_prompt_name"] = "2 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 5
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-no-token":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper-no-token"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-mono-tool":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper-no-token"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 10
+                    case "llama-highk":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper-no-token"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 30
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-lowk":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-paper-no-token"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["free_gen_prompt_name"] = "2 0 0"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        #ex_config["override_tool_explan"] = {tool:prepare_prompt("0 1", tool) for tool in ex_config["tools"]}
+                        #ex_config["debug_level"] = 2
+                        ex_config["pretty_tools"] = True
+                        ex_config["tool_top_k"] = 3
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-method-b":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-method-b"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["method_b"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        ex_config["tool_top_k"] = 3
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-method-b-0-shot":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-method-b"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["method_b"] = True
+                        ex_config["free_gen_prompt_name"] = "0.5 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        
+                        ex_config["tool_top_k"] = 3
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-method-b-high-k":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-method-b"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["method_b"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+                    case "llama-method-b-higher-k":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-method-b"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["method_b"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        
+                        ex_config["tool_top_k"] = 30
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+
+                    case "llama-method-b-no-calc":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-method-b-no-calc"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["method_b"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1 spec"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+
+                    case "llama-method-b-no-calc-low-k":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-method-b-no-calc"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        ex_config["method_b"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1 spec"
+                        ex_config["tool_top_k"] = 3
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+
+                    case "llama-method-b-token":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-method-b-token"]
+                        ex_config["new_tokens"] = ["<TOOL>", "</TOOL>"]
+                        ex_config["tool_tokens"] = ["<TOOL>"]
+                        ex_config["end_tool_token"] = "</TOOL>"
+                        ex_config["substitute_explan_tokens"] = ["<TOOL>", "</TOOL>"]
+                        ex_config["method_b"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1 spec"
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+
+                    case "llama-toolformer":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["model_path"] = TRAINED_MODELS["LLAMA-toolformer"]
+                        ex_config["tool_tokens"] = ["["]
+                        ex_config["end_tool_token"] = "]"
+                        ex_config["substitute_explan_tokens"] = ["[", "]"]
+                        ex_config["toolformer"] = True
+                        ex_config["free_gen_prompt_name"] = "0 1 spec"
+                        ex_config["tool_top_k"] = 10
+                        ex_config["tools"] = ["Calculator", "WikiSearch", "Calendar"]
+
+
+
+
+
+
+
+
                     case "LLAMA_baseline_0.5":
                         ex_config["base_model"] = "LLAMA"
                         ex_config["disable_tools"] = True
                         ex_config["free_gen_prompt_name"] = "0.5 spec"
+                    case "LLAMA_baseline_0.2":
+                        ex_config["base_model"] = "LLAMA"
+                        ex_config["disable_tools"] = True
+                        ex_config["free_gen_prompt_name"] = "0.2"
                     case "LLAMA_Master_1.5":
                         ex_config["base_model"] = "LLAMA"
                         ex_config["free_gen_prompt_name"] = "1.5 spec"

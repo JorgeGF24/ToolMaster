@@ -23,6 +23,10 @@ import ast
 from beartype import beartype
 from beartype.typing import List, Dict, Tuple
 
+from itertools import repeat
+
+from enum import Enum
+
 DEVICE = "cuda"
 
 pad_sequence = partial(pad_sequence, batch_first=True)
@@ -35,10 +39,16 @@ ARG_TRAINING = True
 LORA = False
 SHUFFLE = False
 RAW = False
-MODEL_NAME = "GPTJ"
+MODEL_NAME = "LLAMA"
 MODEL_LAYERS = LLAMA_LAYERS if MODEL_NAME == "LLAMA" else GPTJ_LAYERS
-NO_TOKEN_OPTION = ""# ""#
-METHOD_B = False
+NO_TOKEN_OPTION = "_no_token"#""# ""#
+
+class MethodTypes(Enum):
+    METHOD_A = 1
+    METHOD_B = 2
+    TOOLFORMER = 3
+    
+TRAIN_METHOD = MethodTypes.TOOLFORMER
 
 TOOL_START_TOKEN = "<TOOL>"
 TOOL_END_TOKEN = "</TOOL>" 
@@ -164,7 +174,56 @@ arg training, LORA""",
 - 3000 Calc, 6000 wiki, 2000 Calend""",
 
 """ med2: 
-- same as med but with 3e-5 lr"""
+- same as med but with 3e-5 lr""",
+
+""" paper-test:
+- round2 + med_set
+- 4620 calc, 3700 calend, 8984 wiki
+- 1e-5 lr
+
+""",
+
+""" paper-method-b:
+- round2 + med_set
+- 4620 calc, 3700 calend, 8984 wiki
+- 1e-5 lr
+- no token
+
+""",
+
+""" paper-no-calc-small:
+- (round2 + med_set) [-4000:]
+- 4620 calc, 3700 calend, 8984 wiki
+- 1e-5 lr
+- no token
+
+""",
+
+""" paper-method-b-no-calc:
+- (round2 + med_set)
+- 4620 calc, 3700 calend, 8984 wiki
+- 1e-5 lr
+- no token
+- method b
+- no calc
+
+""",
+
+""" paper-method-b-token:
+- (round2 + med_set)
+- 4620 calc, 3700 calend, 8984 wiki
+- 1e-5 lr
+- method b
+
+""",
+
+""" paper-toolformer:
+- (round2 + med_set)
+- 4620 calc, 3700 calend, 8984 wiki
+- 1e-5 lr
+- method b
+
+"""
 ]
 
 tool_name_alternatives = {
@@ -1471,7 +1530,7 @@ tool_desc = {
 
 }
 
-if METHOD_B:
+if TRAIN_METHOD == MethodTypes.METHOD_B:
     intention_desc = {
         "Calculator":{
             "mix": [
@@ -3739,21 +3798,19 @@ if MODEL_NAME == "GPT2":
 elif MODEL_NAME == "GPTJ":
     from transformers import AutoTokenizer, AutoModelForCausalLM
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B", truncate=True, max_length=270, cache_dir=cache_dir)
-elif MODEL_NAME == "LLAMA2":
+elif MODEL_NAME == "LLAMA":
     from transformers import LlamaTokenizer, LlamaForCausalLM, LlamaConfig
     tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf", cache_dir=cache_dir,
-                                        token= "***REMOVED***")
+                                        token= "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")
 
-
-
-tokenizer.pad_token = tokenizer.eos_token
 
 if NO_TOKEN_OPTION == "":
     tokenizer.add_tokens([TOOL_START_TOKEN, TOOL_END_TOKEN])
-    tokenizer.pad_token = tokenizer.eos_token
 
+tokenizer.pad_token = tokenizer.eos_token
+tokenizer.add_bos_token = False
 
-if METHOD_B:
+if TRAIN_METHOD == MethodTypes.METHOD_B:
     tokenizer.add_tokens(["[ARGS]"])
 
     arg_token_id = len(tokenizer) - 1
@@ -3866,7 +3923,7 @@ class RawDataset(torch.utils.data.Dataset):
         return self.model.prepare_inputs_for_generation(tokenized_text)
 
 
-def come_as_you_are_collate_fn(batch):
+def toolformer_collate_fn(batch):
 
     texts, token_types, _, _ = zip(*batch, strict=True)
 
@@ -3877,7 +3934,7 @@ def come_as_you_are_collate_fn(batch):
     texts = pad_sequence(texts, padding_value=PAD_ID)
 
     token_types = list(map(int_tensor, token_types))
-    masks = list(map(method_a_masker, token_types))
+    masks = list(map(toolformer_masker, token_types))
     masks = pad_sequence(masks, padding_value=0)
 
     for text, mask in zip(texts, masks):
@@ -3971,7 +4028,8 @@ def change_name_collate_fn(batch):
     prompts = map(lambda cohort: AVAILABLE_TOOLS_PROMPT.replace("[TOOLS]", cohort), tool_cohorts)
     # Random PROMPT_REMOVAL_P% chance of removing the prompt
     prompts = map(lambda prompt: prompt if random.random() > PROMPT_REMOVAL_P else "", prompts)
-    prompts = list(map(tokenizer.encode, prompts))
+    bos_option = [tokenizer.bos_token_id] if MODEL_NAME == "LLAMA" else []
+    prompts = list(map(lambda x: bos_option + tokenizer.encode(x), prompts))
     token_types[0] = list(map(lambda prompt: [7,]*len(prompt), prompts))
     main_tools = list(map(tokenizer.encode, main_tools))
     token_types[2] = list(map(lambda tool: [0,]*len(tool), main_tools))
@@ -4001,8 +4059,8 @@ def change_name_collate_fn(batch):
     if ARG_TRAINING:
         resp_indexes = list(map(lambda token_type: token_type.index(6), token_types[3]))
         end_texts, token_types[3] = zip(*map(lambda text, token_type, idx: (text[:idx], token_type[:idx]), end_texts, token_types[3], resp_indexes))
-        arg_texts = list(map(add_4, zip(start_texts, main_tools, end_texts, strict=True)))
-        arg_token_types = list(map(add_4, zip(token_types[1], token_types[2], token_types[3], strict=True)))
+        arg_texts = list(map(add_4, zip(repeat(bos_option, len(start_texts)), start_texts, main_tools, end_texts, strict=True)))
+        arg_token_types = list(map(add_4, zip(repeat([7] if bos_option else [], len(start_texts)), token_types[1], token_types[2], token_types[3], strict=True)))
 
         for text, mask in zip(arg_texts, arg_token_types):
             assert len(text) == len(mask), f"Shapes dont match: {len(text)} != {len(mask)}"
@@ -4156,7 +4214,7 @@ class MyTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 
-train_data_dir = f"/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/train/curated/{MODEL_NAME}_small2/"
+train_data_dir = f"/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/data/train/curated/LLAMA2_GPTJ_merged_2/"
 train_files = [file for file in os.listdir(train_data_dir) if file.endswith(".csv")]
 train_files = [f"train_short{NO_TOKEN_OPTION}.csv"]
 raw_train_files = [f"{file[:-4]}_texts.csv" for file in train_files]
@@ -4174,7 +4232,7 @@ if not RAW:
     if REMOVE_CALCULATOR:
         train_dataset = train_dataset[train_dataset["tool_name"] != "Calculator"].reset_index(drop=True)
 
-    train_dataset = Dataset.from_pandas(train_dataset)
+    train_dataset = Dataset.from_pandas(train_dataset[:3000])
 
     print("Loaded dataset")
 
@@ -4196,13 +4254,13 @@ else:
 
 
 
-TRAIN_NAME = "small2-arg" # "increasing_relevance_2" # "no_duplicates_2"
+TRAIN_NAME = "paper-toolformer" # "increasing_relevance_2" # "no_duplicates_2"
 
 training_args = TrainingArguments(
     output_dir="./results/test", # The output directory
     overwrite_output_dir=True, # overwrite the content of the output directory
     num_train_epochs=1, # number of training epochs
-    per_device_train_batch_size=8, # batch size for training
+    per_device_train_batch_size=1, # batch size for training
     #per_device_eval_batch_size=1,  # batch size for evaluation
     #eval_steps = 10000, # Number of update steps between two evaluations.
     #evaluation_strategy = "steps",
@@ -4212,7 +4270,7 @@ training_args = TrainingArguments(
     dataloader_pin_memory=False,
     do_train=True,
     deepspeed="/vol/bitbucket/jg2619/augmenting_llms/model_training/model_experiments/ds_conf.json",
-    gradient_accumulation_steps=2,
+    gradient_accumulation_steps=16,
     evaluation_strategy="no",
     do_eval=False
 )
@@ -4230,17 +4288,23 @@ def load_model(new_tokens = NO_TOKEN_OPTION == ""):
             low_cpu_mem_usage=True,          # CANT HANDLE DEEPSPEED ZERO 3
             cache_dir=cache_dir 
         ).cuda()
-    elif MODEL_NAME == "LLAMA2":
-        config = LlamaConfig.from_pretrained("meta-llama/Llama-2-7b-hf", 
-                                             padding_idx=tokenizer.pad_token_id)
-        model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf", cache_dir=cache_dir,
-                token="***REMOVED***",
-                torch_dtype=torch.float16,
-                low_cpu_mem_usage=True,
-                config=config,)
+    elif MODEL_NAME == "LLAMA":
+        config = LlamaConfig.from_pretrained(
+            "meta-llama/Llama-2-7b-hf", 
+            padding_idx=tokenizer.pad_token_id,
+            token="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",
+        )
+        model = LlamaForCausalLM.from_pretrained(
+            "meta-llama/Llama-2-7b-hf", 
+            cache_dir=cache_dir,
+            token="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",
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True,
+            config=config,
+        )
 
     if new_tokens:
-        model.resize_token_embeddings(len(tokenizer) - METHOD_B) # If method B, we have added the practical [ARGS] token
+        model.resize_token_embeddings(len(tokenizer) - (1 if TRAIN_METHOD == MethodTypes.METHOD_B else 0)) # If method B, we have added the practical [ARGS] token
         print(f"Len tokenizer: {len(tokenizer)}")
 
     unfrozen_count = 0
@@ -4272,6 +4336,7 @@ def load_model(new_tokens = NO_TOKEN_OPTION == ""):
 
 
 DEBUG = True
+toolformer_masker = partial(torch.isin, test_elements=int_tensor([0,1,2,3,8] + ([4,5] if ARG_TRAINING else [])))
 method_a_masker = partial(torch.isin, test_elements=int_tensor([0,1,2,3,8]))
 arg_selection_masker = partial(torch.isin, test_elements=int_tensor([4,5]))
 method_b_masker = partial(torch.isin, test_elements=int_tensor([0,1,4,5,8]))
@@ -4322,11 +4387,18 @@ def main():
 
         training_args.warmup_steps = len(train_dataset)*7 // 100
 
+        method_to_collate = {
+            MethodTypes.METHOD_A: change_name_collate_fn,
+            MethodTypes.METHOD_B: method_2_collate_fn,
+            MethodTypes.TOOLFORMER: toolformer_collate_fn
+            
+        }
+        
         trainer = MyTrainer(
             model=model, # the instantiated 🤗 Transformers model to be trained
             args=training_args, # training arguments, defined above
             train_dataset=train_dataset, # training dataset
-            data_collator = method_2_collate_fn if METHOD_B else change_name_collate_fn,
+            data_collator =  method_to_collate[TRAIN_METHOD]
         )
 
         print("GONNA TRAIN")

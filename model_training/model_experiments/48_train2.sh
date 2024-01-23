@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -o ./slurm/slurm-%j.out # STDOUT
 #SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:teslaa40:2
+#SBATCH --gres=gpu:teslaa40:1
 #SBATCH --mail-type=ALL # required to send email notifcations
 #SBATCH --mail-user=24mokies2@gmail.com # required to send email notifcations - please replace <your_username> with your college login name or email address
 export PATH=/vol/bitbucket/jg2619/toolformer-luci/oldtoolvenv/bin/:$PATH

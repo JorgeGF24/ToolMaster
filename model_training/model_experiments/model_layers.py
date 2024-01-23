@@ -22,7 +22,7 @@ if LLAMA:
     model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf",
                                                 torch_dtype=torch.float16,
                                                 low_cpu_mem_usage=True,
-                                                token="***REMOVED***",
+                                                token="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",
                                                 cache_dir=cache_dir)
 else:
     model = AutoModelForCausalLM.from_pretrained(
