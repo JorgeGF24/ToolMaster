@@ -7,6 +7,7 @@ export PATH=/vol/bitbucket/jg2619/toolformer-luci/oldtoolvenv/bin/:$PATH
 export LD_LIBRARY_PATH=/vol/bitbucket/jg2619/augmenting_llms/dependencies/OpenBlas/lib/:$LD_LIBRARY_PATH
 export PYSERINI_CACHE=/vol/bitbucket/jg2619/augmenting_llms/augmented_data_pipeline/toolformer/cache
 export TORCH_USE_CUDA_DSA=1
+export CUDA_LAUNCH_BLOCKING=1
 /usr/bin/nvidia-smi
 echo $(date)
 SECONDS=0
@@ -18,7 +19,11 @@ echo "Evaluating Benchmarks on 48Gb job"
 # Datasets: "test, asdiv, gms8k-easy, gms8k-hard, triviaQA"
 # Models: "AY", "DX", "DX-2", "A basic 0-shot", "A basic 0-shot-b", "A basic 1-shot"
 #python eval_benchmark.py "ASDiv-full, triviaQA" "med, med-no-token, med-no-token-high-k, med-no-token-low-k, med-no-token-mono, med-no-token-0" "$1"
-python eval_benchmark.py "triviaQA" "med-no-token-low-k" "$1"
+python eval_benchmark_llama.py "ASDiv-full, triviaQA" "llama-method-b-token" $1
+#"llama-mono-tool, llama-highk, llama-lowk"
+#"llama-1, llama-2, llama-3, llama-4, llama-no-calc, llama-no-token"
+#"LLAMA_baseline_0.5, LLAMA_Master_1.5, LLAMA_baselineb, LLAMA_Masterb, LLAMA_baseline, LLAMA_baseline+, LLAMA_Master, LLAMA_Master-0shot, LLAMA_Master-2shot-5, LLAMA_Master-2shot-15" "$1"
+# "LLAMA_baseline_0.5, LLAMA_Master_1.5, LLAMA_baselineb, LLAMA_Masterb, LLAMA_baseline, LLAMA_baseline+, LLAMA_Master, LLAMA_Master-0shot, LLAMA_Master-2shot-5, LLAMA_Master-2shot-15"
 #python eval_benchmark.py "ASDiv-full" "med-arg-0" "$1"
 # "med-no-token, med-no-token-high-k, med-no-token-low-k, med-no-token-mono, med-no-token-0" "$1" 
 # TODO: med-no-token-no-tools-1, med-no-token-no-tools-2
