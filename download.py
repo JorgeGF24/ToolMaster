@@ -15,7 +15,7 @@ SCOPES = ['https://www.googleapis.com/auth/drive']
 def authenticate_google_drive_headless():
     creds = None
     # Load the credentials from the saved token
-    with open('/home/***REMOVED***token2.pickle', 'rb') as token:
+    with open('/home/***REMOVED***/token2.pickle', 'rb') as token:
         creds = pickle.load(token)
     service = build('drive', 'v3', credentials=creds)
     return service
