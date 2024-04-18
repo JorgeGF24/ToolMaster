@@ -1,8 +1,8 @@
 import json
 import os
 
-folder_path = '/home/***REMOVED***/ccnet'
-processed_folder_path = '/home/***REMOVED***/ccnet_filenames'
+folder_path = '/home/ccnet'
+processed_folder_path = '/home/ccnet_filenames'
 
 # Create processed folder if it does not exist
 os.makedirs(processed_folder_path, exist_ok=True)
