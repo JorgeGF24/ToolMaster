@@ -4,10 +4,10 @@ from googleapiclient.http import MediaIoBaseDownload
 import io, os, pickle
 
 # Folder ID from Google Drive
-FOLDER_ID = '1v8l9oWoxY-QybUSI9kNIZdOP9avdmE9W'
+FOLDER_ID = ''
 
 # Local directory to save the downloaded files
-DOWNLOAD_DIR = '/home/***REMOVED***ccnet'
+DOWNLOAD_DIR = '/home/ccnet'
 
 # Define the scopes
 SCOPES = ['https://www.googleapis.com/auth/drive']
