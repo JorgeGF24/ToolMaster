@@ -260,7 +260,7 @@ def WolframAlphaCalculator(input_query: str):
     # return f"Assumption: {assumption} \nAnswer: {answer}"
     return answer
 
-openai.api_key = "***REMOVED***"
+openai.api_key = ""
 
 def GPT3Wiki(prompt):
     completion = openai.ChatCompletion.create(
